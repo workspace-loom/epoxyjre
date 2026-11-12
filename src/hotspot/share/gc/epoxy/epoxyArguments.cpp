@@ -29,9 +29,12 @@
 #include "logging/log.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/globals_extension.hpp"
+#include "utilities/powerOfTwo.hpp"
 
 size_t EpoxyArguments::conservative_max_heap_alignment() {
-  return UseLargePages ? os::large_page_size() : os::vm_page_size();
+  // Asked before flags are final: answer for the largest EpoxyPageSize allowed.
+  size_t os_page = UseLargePages ? os::large_page_size() : os::vm_page_size();
+  return MAX2(os_page, (size_t)(1 * M));
 }
 
 void EpoxyArguments::initialize() {
@@ -42,16 +45,6 @@ void EpoxyArguments::initialize() {
   // Forcefully exit when OOME is detected. Nothing we can do at that point.
   if (FLAG_IS_DEFAULT(ExitOnOutOfMemoryError)) {
     FLAG_SET_DEFAULT(ExitOnOutOfMemoryError, true);
-  }
-
-  if (EpoxyMaxTLABSize < MinTLABSize) {
-    log_warning(gc)("EpoxyMaxTLABSize < MinTLABSize, adjusting it to %zu", MinTLABSize);
-    EpoxyMaxTLABSize = MinTLABSize;
-  }
-
-  if (!EpoxyElasticTLAB && EpoxyElasticTLABDecay) {
-    log_warning(gc)("Disabling EpoxyElasticTLABDecay because EpoxyElasticTLAB is disabled");
-    FLAG_SET_DEFAULT(EpoxyElasticTLABDecay, false);
   }
 
 #ifdef COMPILER2
@@ -68,6 +61,11 @@ void EpoxyArguments::initialize() {
 void EpoxyArguments::initialize_alignments() {
   size_t page_size = UseLargePages ? os::large_page_size() : os::vm_page_size();
   size_t align = MAX2(os::vm_allocation_granularity(), page_size);
+  if (!is_power_of_2(EpoxyPageSize)) {
+    vm_exit_during_initialization("EpoxyPageSize must be a power of two between 64K and 1M");
+  }
+  // The heap must start on an Epoxy page boundary.
+  align = MAX2(align, (size_t)EpoxyPageSize);
   SpaceAlignment = align;
   HeapAlignment  = align;
 }

@@ -55,7 +55,8 @@ private:
 
 public:
   // reserved must be aligned to page_size_bytes at both ends.
-  EpoxyPageAllocator(MemRegion reserved, size_t page_size_bytes);
+  // pre_committed: the whole range is already committed (explicit large pages).
+  EpoxyPageAllocator(MemRegion reserved, size_t page_size_bytes, bool pre_committed = false);
   ~EpoxyPageAllocator();
 
   // A contiguous run with top() == bottom(), or null when no run fits.

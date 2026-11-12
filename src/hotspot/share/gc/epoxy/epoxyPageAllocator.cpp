@@ -20,13 +20,14 @@
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "memory/allocation.inline.hpp"
 #include "runtime/atomicAccess.hpp"
+#include "runtime/globals.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/os.hpp"
 #include "utilities/align.hpp"
 #include "utilities/bitMap.inline.hpp"
 #include "utilities/powerOfTwo.hpp"
 
-EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_bytes) :
+EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_bytes, bool pre_committed) :
     _reserved(reserved),
     _page_size_bytes(page_size_bytes),
     _page_shift(log2i_exact(page_size_bytes)),
@@ -36,7 +37,7 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
     _committed(reserved.byte_size() >> log2i_exact(page_size_bytes), mtGC),
     _used_pages(0),
     _committed_bytes(0),
-    _lock(Mutex::nosafepoint, "EpoxyPageAllocator_lock") {
+    _lock(Mutex::nosafepoint - 1, "EpoxyPageAllocator_lock") {
   assert(is_aligned(reserved.start(), page_size_bytes), "start must be page aligned");
   assert(is_aligned(reserved.end(), page_size_bytes), "end must be page aligned");
 
@@ -52,6 +53,10 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
     page->_next = nullptr;
   }
   _free.set_range(0, _max_pages);
+  if (pre_committed) {
+    _committed.set_range(0, _max_pages);
+    _committed_bytes = reserved.byte_size();
+  }
 }
 
 EpoxyPageAllocator::~EpoxyPageAllocator() {
@@ -77,6 +82,9 @@ bool EpoxyPageAllocator::commit_run(size_t start, size_t num_pages) {
     }
     if (!os::commit_memory(page_base(i), _page_size_bytes, false /* executable */)) {
       return false;
+    }
+    if (AlwaysPreTouch) {
+      os::pretouch_memory(page_base(i), page_base(i + 1));
     }
     _committed.set_bit(i);
     _committed_bytes += _page_size_bytes;

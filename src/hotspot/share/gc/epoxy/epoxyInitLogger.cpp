@@ -31,23 +31,12 @@
 #include "utilities/globalDefinitions.hpp"
 
 void EpoxyInitLogger::print_gc_specific() {
+  log_info(gc, init)("Page Size: " EXACTFMT, EXACTFMTARGS((size_t)EpoxyPageSize));
   if (UseTLAB) {
     size_t max_tlab = EpoxyHeap::heap()->max_tlab_size() * HeapWordSize;
     log_info(gc, init)("TLAB Size Max: " EXACTFMT, EXACTFMTARGS(max_tlab));
-    if (EpoxyElasticTLAB) {
-      log_info(gc, init)("TLAB Size Elasticity: %.2fx", EpoxyTLABElasticity);
-    }
-    if (EpoxyElasticTLABDecay) {
-      log_info(gc, init)("TLAB Size Decay Time: %zums", EpoxyTLABDecayTime);
-    }
   } else {
     log_info(gc, init)("TLAB: Disabled");
-  }
-
-  // Suggest that non-resizable heap might be better for some configurations.
-  // We are not adjusting the heap size by ourselves, because it affects startup time.
-  if (InitialHeapSize != MaxHeapSize) {
-    log_info(gc)("Consider setting -Xms equal to -Xmx to avoid resizing hiccups");
   }
 
   // Suggest that AlwaysPreTouch might be better for some configurations.

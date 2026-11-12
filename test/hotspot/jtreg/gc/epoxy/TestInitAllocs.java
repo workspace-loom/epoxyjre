@@ -85,9 +85,7 @@ public class TestInitAllocs {
   public static void main(String... args) throws Exception {
     List<String> testArgs = new ArrayList<>();
     testArgs.add("-Xmx256m");
-    testArgs.add("-XX:+UnlockExperimentalVMOptions");
     testArgs.add("-XX:+UseEpoxy");
-    testArgs.add("-XX:EpoxyMinHeapExpand=1024");
     testArgs.add("-XX:EpoxyUpdateCountersStep=1");
     testArgs.add("-XX:EpoxyPrintHeapSteps=1000000");
     testArgs.addAll(Arrays.asList(args));

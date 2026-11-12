@@ -99,7 +99,9 @@ public class TestMemoryMXBeans {
 
             long diff = heapUsed2 - heapUsed1 - adj;
             long min =  8 + 4*1024*1024;
-            long max = 16 + 4*1024*1024;
+            // Epoxy counts whole pages: a 4M array takes a run of pages to itself,
+            // so used space grows by its size rounded up, to at most two default pages more.
+            long max = 4*1024*1024 + 2*256*1024;
             if ((min <= diff && diff <= max)) {
               // Success
               return;

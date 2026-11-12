@@ -29,10 +29,11 @@
 #include "gc/epoxy/epoxyBarrierSet.hpp"
 #include "gc/epoxy/epoxyMonitoringSupport.hpp"
 #include "gc/shared/collectedHeap.hpp"
-#include "gc/shared/space.hpp"
-#include "memory/virtualspace.hpp"
 #include "runtime/atomic.hpp"
 #include "services/memoryManager.hpp"
+
+class EpoxyPageAllocator;
+class EpoxyRegion;
 
 class EpoxyHeap : public CollectedHeap {
   friend class VMStructs;
@@ -40,14 +41,16 @@ private:
   EpoxyMonitoringSupport* _monitoring_support;
   MemoryPool* _pool;
   GCMemoryManager _memory_manager;
-  ContiguousSpace* _space;
-  VirtualSpace _virtual_space;
+  EpoxyPageAllocator* _page_allocator;
+  EpoxyRegion* _global_region;
+  size_t _page_size_bytes;
   size_t _max_tlab_size;
   size_t _step_counter_update;
   size_t _step_heap_print;
-  int64_t _decay_time_ns;
   Atomic<size_t> _last_counter_update;
   Atomic<size_t> _last_heap_print;
+
+  static const size_t MinPages = 16;
 
   void print_tracing_info() const override;
   void stop() override {};
@@ -57,7 +60,9 @@ public:
 
   EpoxyHeap() :
           _memory_manager("Epoxy Heap"),
-          _space(nullptr) {};
+          _page_allocator(nullptr),
+          _global_region(nullptr),
+          _page_size_bytes(0) {};
 
   Name kind() const override {
     return CollectedHeap::Epoxy;
@@ -74,13 +79,15 @@ public:
   GrowableArray<GCMemoryManager*> memory_managers() override;
   GrowableArray<MemoryPool*> memory_pools() override;
 
-  size_t max_capacity() const override { return _virtual_space.reserved_size();  }
-  size_t capacity()     const override { return _virtual_space.committed_size(); }
-  size_t used()         const override { return _space->used(); }
+  EpoxyPageAllocator* page_allocator() const { return _page_allocator; }
+  EpoxyRegion* global_region() const         { return _global_region; }
 
-  bool is_in(const void* p) const override {
-    return _space->is_in(p);
-  }
+  // Sizes are in whole pages: a page counts as used once a region owns it.
+  size_t max_capacity() const override { return _reserved.byte_size(); }
+  size_t capacity()     const override;
+  size_t used()         const override;
+
+  bool is_in(const void* p) const override;
 
   bool requires_barriers(stackChunkOop obj) const override { return false; }
 

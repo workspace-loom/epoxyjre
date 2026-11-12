@@ -26,7 +26,8 @@
 #include "gc/epoxy/epoxyHeap.hpp"
 #include "gc/epoxy/epoxyInitLogger.hpp"
 #include "gc/epoxy/epoxyMemoryPool.hpp"
-#include "gc/epoxy/epoxyThreadLocalData.hpp"
+#include "gc/epoxy/epoxyPageAllocator.hpp"
+#include "gc/epoxy/epoxyRegion.hpp"
 #include "gc/shared/gcArguments.hpp"
 #include "gc/shared/locationPrinter.inline.hpp"
 #include "logging/log.hpp"
@@ -38,26 +39,27 @@
 #include "utilities/ostream.hpp"
 
 jint EpoxyHeap::initialize() {
-  size_t align = HeapAlignment;
-  size_t init_byte_size = align_up(InitialHeapSize, align);
-  size_t max_byte_size  = align_up(MaxHeapSize, align);
+  _page_size_bytes = EpoxyPageSize;
 
-  // Initialize backing storage
-  ReservedHeapSpace heap_rs = Universe::reserve_heap(max_byte_size, align);
-  _virtual_space.initialize(heap_rs, init_byte_size);
+  // The heap is a whole number of pages: round the maximum size down.
+  size_t max_byte_size = align_down(MaxHeapSize, _page_size_bytes);
+  if (max_byte_size / _page_size_bytes < MinPages) {
+    vm_exit_during_initialization("Epoxy heap is too small: at least 16 pages of EpoxyPageSize are required");
+  }
 
-  MemRegion committed_region((HeapWord*)_virtual_space.low(),          (HeapWord*)_virtual_space.high());
-
+  // Reserve the address range. Pages are committed as they are first handed out.
+  ReservedHeapSpace heap_rs = Universe::reserve_heap(max_byte_size, HeapAlignment);
   initialize_reserved_region(heap_rs);
+  assert(is_aligned(_reserved.start(), _page_size_bytes), "heap start must be page aligned");
 
-  _space = new ContiguousSpace();
-  _space->initialize(committed_region, /* clear_space = */ true);
+  MemRegion pages_region(_reserved.start(), max_byte_size / HeapWordSize);
+  _page_allocator = new EpoxyPageAllocator(pages_region, _page_size_bytes, heap_rs.special());
+  _global_region = new EpoxyRegion(_page_allocator, "global");
 
-  // Precompute hot fields
-  _max_tlab_size = MIN2(CollectedHeap::max_tlab_size(), align_object_size(EpoxyMaxTLABSize / HeapWordSize));
+  // Precompute hot fields. A TLAB never spans pages.
+  _max_tlab_size = MIN2(CollectedHeap::max_tlab_size(), align_object_size(_page_size_bytes / HeapWordSize));
   _step_counter_update = MIN2<size_t>(max_byte_size / 16, EpoxyUpdateCountersStep);
   _step_heap_print = (EpoxyPrintHeapSteps == 0) ? SIZE_MAX : (max_byte_size / EpoxyPrintHeapSteps);
-  _decay_time_ns = (int64_t) EpoxyTLABDecayTime * NANOSECS_PER_MILLISEC;
 
   // Enable monitoring
   _monitoring_support = new EpoxyMonitoringSupport(this);
@@ -69,6 +71,19 @@ jint EpoxyHeap::initialize() {
   EpoxyInitLogger::print();
 
   return JNI_OK;
+}
+
+size_t EpoxyHeap::capacity() const {
+  return _page_allocator->committed_bytes();
+}
+
+size_t EpoxyHeap::used() const {
+  return _page_allocator->used_pages() * _page_size_bytes;
+}
+
+bool EpoxyHeap::is_in(const void* p) const {
+  EpoxyPage* page = _page_allocator->page_for(p);
+  return page != nullptr && p < (const void*)page->top();
 }
 
 void EpoxyHeap::initialize_serviceability() {
@@ -106,52 +121,12 @@ EpoxyHeap* EpoxyHeap::heap() {
 HeapWord* EpoxyHeap::allocate_work(size_t size) {
   assert(is_object_aligned(size), "Allocation size should be aligned: %zu", size);
 
-  HeapWord* res = nullptr;
-  while (true) {
-    // Try to allocate, assume space is available
-    res = _space->par_allocate(size);
-    if (res != nullptr) {
-      break;
-    }
-
-    // Allocation failed, attempt expansion, and retry:
-    {
-      MutexLocker ml(Heap_lock);
-
-      // Try to allocate under the lock, assume another thread was able to expand
-      res = _space->par_allocate(size);
-      if (res != nullptr) {
-        break;
-      }
-
-      // Expand and loop back if space is available
-      size_t size_in_bytes = size * HeapWordSize;
-      size_t uncommitted_space = max_capacity() - capacity();
-      size_t unused_space = max_capacity() - used();
-      size_t want_space = MAX2(size_in_bytes, EpoxyMinHeapExpand);
-      assert(unused_space >= uncommitted_space,
-             "Unused (%zu) >= uncommitted (%zu)",
-             unused_space, uncommitted_space);
-
-      if (want_space < uncommitted_space) {
-        // Enough space to expand in bulk:
-        bool expand = _virtual_space.expand_by(want_space);
-        assert(expand, "Should be able to expand");
-      } else if (size_in_bytes < unused_space) {
-        // No space to expand in bulk, and this allocation is still possible,
-        // take all the remaining space:
-        bool expand = _virtual_space.expand_by(uncommitted_space);
-        assert(expand, "Should be able to expand");
-      } else {
-        // No space left:
-        return nullptr;
-      }
-
-      _space->set_end((HeapWord *) _virtual_space.high());
-    }
+  HeapWord* res = _global_region->allocate(size);
+  if (res == nullptr) {
+    return nullptr;
   }
 
-  size_t used = _space->used();
+  size_t used = this->used();
 
   // Allocation successful, update counters and print status.
   // At this point, some diagnostic subsystems might not yet be initialized.
@@ -179,90 +154,29 @@ HeapWord* EpoxyHeap::allocate_work(size_t size) {
 }
 
 HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
-                                         size_t requested_size,
-                                         size_t* actual_size) {
-  Thread* thread = Thread::current();
-
-  // Defaults in case elastic paths are not taken
-  bool fits = true;
-  size_t size = requested_size;
-  size_t ergo_tlab = requested_size;
-  int64_t time = 0;
-
-  if (EpoxyElasticTLAB) {
-    ergo_tlab = EpoxyThreadLocalData::ergo_tlab_size(thread);
-
-    if (EpoxyElasticTLABDecay) {
-      int64_t last_time = EpoxyThreadLocalData::last_tlab_time(thread);
-      time = (int64_t) os::javaTimeNanos();
-
-      assert(last_time <= time, "time should be monotonic");
-
-      // If the thread had not allocated recently, retract the ergonomic size.
-      // This conserves memory when the thread had initial burst of allocations,
-      // and then started allocating only sporadically.
-      if (last_time != 0 && (time - last_time > _decay_time_ns)) {
-        ergo_tlab = 0;
-        EpoxyThreadLocalData::set_ergo_tlab_size(thread, 0);
-      }
-    }
-
-    // If we can fit the allocation under current TLAB size, do so.
-    // Otherwise, we want to elastically increase the TLAB size.
-    fits = (requested_size <= ergo_tlab);
-    if (!fits) {
-      size = (size_t) (ergo_tlab * EpoxyTLABElasticity);
-    }
-  }
-
-  // Always honor boundaries
-  size = clamp(size, min_size, _max_tlab_size);
-
-  // Always honor alignment
+                                       size_t requested_size,
+                                       size_t* actual_size) {
+  // Always honor boundaries and alignment. A TLAB is at most one page.
+  size_t size = clamp(requested_size, min_size, _max_tlab_size);
   size = align_up(size, MinObjAlignment);
 
-  // Check that adjustments did not break local and global invariants
-  assert(is_object_aligned(size),
-         "Size honors object alignment: %zu", size);
-  assert(min_size <= size,
-         "Size honors min size: %zu <= %zu", min_size, size);
-  assert(size <= _max_tlab_size,
-         "Size honors max size: %zu <= %zu", size, _max_tlab_size);
-  assert(size <= CollectedHeap::max_tlab_size(),
-         "Size honors global max size: %zu <= %zu", size, CollectedHeap::max_tlab_size());
+  assert(min_size <= size, "Size honors min size: %zu <= %zu", min_size, size);
+  assert(size <= _max_tlab_size, "Size honors max size: %zu <= %zu", size, _max_tlab_size);
 
   if (log_is_enabled(Trace, gc)) {
     ResourceMark rm;
-    log_trace(gc)("TLAB size for \"%s\" (Requested: %zuK, Min: %zu"
-                          "K, Max: %zuK, Ergo: %zuK) -> %zuK",
-                  thread->name(),
+    log_trace(gc)("TLAB size for \"%s\" (Requested: %zuK, Min: %zuK, Max: %zuK) -> %zuK",
+                  Thread::current()->name(),
                   requested_size * HeapWordSize / K,
                   min_size * HeapWordSize / K,
                   _max_tlab_size * HeapWordSize / K,
-                  ergo_tlab * HeapWordSize / K,
                   size * HeapWordSize / K);
   }
 
-  // All prepared, let's do it!
   HeapWord* res = allocate_work(size);
-
   if (res != nullptr) {
-    // Allocation successful
     *actual_size = size;
-    if (EpoxyElasticTLABDecay) {
-      EpoxyThreadLocalData::set_last_tlab_time(thread, time);
-    }
-    if (EpoxyElasticTLAB && !fits) {
-      // If we requested expansion, this is our new ergonomic TLAB size
-      EpoxyThreadLocalData::set_ergo_tlab_size(thread, size);
-    }
-  } else {
-    // Allocation failed, reset ergonomics to try and fit smaller TLABs
-    if (EpoxyElasticTLAB) {
-      EpoxyThreadLocalData::set_ergo_tlab_size(thread, 0);
-    }
   }
-
   return res;
 }
 
@@ -298,7 +212,7 @@ void EpoxyHeap::do_full_collection(bool clear_all_soft_refs) {
 }
 
 void EpoxyHeap::object_iterate(ObjectClosure *cl) {
-  _space->object_iterate(cl);
+  _global_region->object_iterate(cl);
 }
 
 void EpoxyHeap::print_heap_on(outputStream *st) const {
@@ -306,13 +220,13 @@ void EpoxyHeap::print_heap_on(outputStream *st) const {
 
   StreamIndentor si(st, 1);
 
-  _virtual_space.print_on(st);
-
-  if (_space != nullptr) {
-    st->print_cr("Allocation space:");
-
-    StreamIndentor si(st, 1);
-    _space->print_on(st, "");
+  st->print_cr("Reserved: [" PTR_FORMAT ", " PTR_FORMAT "), %zuK",
+               p2i(_reserved.start()), p2i(_reserved.end()), _reserved.byte_size() / K);
+  if (_page_allocator != nullptr) {
+    st->print_cr("Pages: %zuK each, %zu of %zu in use, %zuK committed",
+                 _page_size_bytes / K,
+                 _page_allocator->used_pages(), _page_allocator->max_pages(),
+                 _page_allocator->committed_bytes() / K);
   }
 }
 

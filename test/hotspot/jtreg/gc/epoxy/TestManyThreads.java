@@ -71,35 +71,57 @@ import java.util.concurrent.atomic.*;
 
 public class TestManyThreads {
 
-  static int COUNT = Integer.getInteger("count", 128);  // 128 * 4M max tlabs = 512M, would overflow without TLAB sizing
+  static final int THREADS = Integer.getInteger("threads", 64);
+  static final int PER_THREAD = Integer.getInteger("count", 20_000);
 
-  static volatile Object sink;
   static volatile Throwable failed;
-  static final AtomicInteger allocated = new AtomicInteger();
+  static final AtomicInteger verified = new AtomicInteger();
 
-  public static void workload() {
+  // Each thread allocates PER_THREAD small arrays stamped with its own index and
+  // checks every stamp at the end: an allocation handed to two threads, or lost,
+  // shows up as a wrong stamp.
+  public static void workload(int id) {
     try {
-      sink = new Object();
-      allocated.incrementAndGet();
-      Thread.sleep(3600 * 1000);
+      int[][] mine = new int[PER_THREAD][];
+      for (int i = 0; i < PER_THREAD; i++) {
+        int[] a = new int[8];
+        for (int j = 0; j < a.length; j++) {
+          a[j] = id * 1_000_000 + i;
+        }
+        mine[i] = a;
+      }
+      for (int i = 0; i < PER_THREAD; i++) {
+        int[] a = mine[i];
+        if (a.length != 8) {
+          throw new IllegalStateException("thread " + id + ": wrong length at " + i);
+        }
+        for (int j = 0; j < a.length; j++) {
+          if (a[j] != id * 1_000_000 + i) {
+            throw new IllegalStateException("thread " + id + ": wrong stamp at " + i);
+          }
+        }
+      }
+      verified.incrementAndGet();
     } catch (Throwable e) {
       failed = e;
     }
   }
 
   public static void main(String[] args) throws Throwable {
-    for (int c = 0; c < COUNT; c++) {
-      Thread t = new Thread(TestManyThreads::workload);
-      t.setDaemon(true);
-      t.start();
+    Thread[] threads = new Thread[THREADS];
+    for (int c = 0; c < THREADS; c++) {
+      final int id = c;
+      threads[c] = new Thread(() -> workload(id));
+      threads[c].start();
     }
-
-    while ((failed == null) && (allocated.get() != COUNT)) {
-        Thread.sleep(100);
+    for (Thread t : threads) {
+      t.join();
     }
-
     if (failed != null) {
       throw failed;
+    }
+    if (verified.get() != THREADS) {
+      throw new IllegalStateException("Only " + verified.get() + " of " + THREADS + " threads verified");
     }
   }
 
