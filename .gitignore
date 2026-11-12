@@ -30,3 +30,7 @@ test/benchmarks/**/target
 /src/hotspot/cmake-build-debug/
 /src/hotspot/.cache/
 /src/hotspot/.idea/
+
+# EpoxyJRE: local-only design documents and throwaway experiments
+/docs/*
+/spike/
