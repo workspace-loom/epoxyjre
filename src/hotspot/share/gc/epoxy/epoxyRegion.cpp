@@ -105,6 +105,38 @@ HeapWord* EpoxyRegion::allocate(size_t size_in_words) {
   }
 }
 
+HeapWord* EpoxyRegion::allocate(size_t min_words, size_t desired_words, size_t* actual_words) {
+  assert(min_words <= desired_words, "min %zu must not exceed desired %zu", min_words, desired_words);
+  assert(desired_words <= _page_words, "a ranged request must fit in one page: %zu", desired_words);
+
+  while (true) {
+    EpoxyPage* page = AtomicAccess::load_acquire(&_current);
+    if (page != nullptr) {
+      HeapWord* top = AtomicAccess::load(page->top_addr());
+      size_t free_words = align_down(pointer_delta(page->end(), top), (size_t)MinObjAlignment);
+      if (free_words >= min_words) {
+        size_t words = MIN2(free_words, desired_words);
+        if (AtomicAccess::cmpxchg(page->top_addr(), top, top + words) == top) {
+          *actual_words = words;
+          return top;
+        }
+        continue;  // lost a race for this page; try again
+      }
+    }
+
+    MutexLocker ml(&_lock, Mutex::_no_safepoint_check_flag);
+    if (AtomicAccess::load(&_current) != page) {
+      continue;  // another thread already moved on
+    }
+    EpoxyPage* fresh = _pages->allocate(1);
+    if (fresh == nullptr) {
+      return nullptr;
+    }
+    append(fresh);
+    AtomicAccess::release_store(&_current, fresh);
+  }
+}
+
 void EpoxyRegion::object_iterate(ObjectClosure* cl) {
   for (EpoxyPage* page = _first; page != nullptr; page = page->next()) {
     HeapWord* p = page->bottom();

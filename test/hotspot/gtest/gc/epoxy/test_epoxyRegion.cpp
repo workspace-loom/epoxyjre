@@ -186,3 +186,36 @@ TEST_VM_F(EpoxyRegionTest, used_bytes_counts_whole_pages) {
   EXPECT_EQ(_region->used_bytes(), RegionPageSize);
   EXPECT_STREQ(_region->name(), "test");
 }
+
+// A request with a minimum and a desired size (a TLAB refill) takes what is
+// left of the current page when that is at least the minimum.
+TEST_VM_F(EpoxyRegionTest, ranged_request_takes_the_page_tail) {
+  HeapWord* first = allocate_object(RegionPageWords - 100);
+  ASSERT_NE(first, (HeapWord*)nullptr);
+
+  size_t actual = 0;
+  HeapWord* tail = _region->allocate(50, RegionPageWords, &actual);
+  ASSERT_NE(tail, (HeapWord*)nullptr);
+  EXPECT_EQ(actual, (size_t)100);
+  EXPECT_EQ(tail, first + (RegionPageWords - 100));
+  EXPECT_EQ(_region->used_bytes(), RegionPageSize);
+}
+
+TEST_VM_F(EpoxyRegionTest, ranged_request_moves_on_when_tail_is_below_minimum) {
+  HeapWord* first = allocate_object(RegionPageWords - 100);
+  ASSERT_NE(first, (HeapWord*)nullptr);
+
+  size_t actual = 0;
+  HeapWord* fresh = _region->allocate(200, RegionPageWords, &actual);
+  ASSERT_NE(fresh, (HeapWord*)nullptr);
+  EXPECT_EQ(actual, RegionPageWords);
+  EXPECT_NE(_allocator->page_for(fresh), _allocator->page_for(first));
+  EXPECT_EQ(_region->used_bytes(), 2 * RegionPageSize);
+}
+
+TEST_VM_F(EpoxyRegionTest, ranged_request_gets_desired_size_when_it_fits) {
+  size_t actual = 0;
+  HeapWord* p = _region->allocate(50, 400, &actual);
+  ASSERT_NE(p, (HeapWord*)nullptr);
+  EXPECT_EQ(actual, (size_t)400);
+}

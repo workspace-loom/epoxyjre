@@ -36,6 +36,7 @@
 #include "memory/resourceArea.hpp"
 #include "memory/universe.hpp"
 #include "runtime/globals.hpp"
+#include "services/memoryUsage.hpp"
 #include "utilities/ostream.hpp"
 
 jint EpoxyHeap::initialize() {
@@ -79,6 +80,18 @@ size_t EpoxyHeap::capacity() const {
 
 size_t EpoxyHeap::used() const {
   return _page_allocator->used_pages() * _page_size_bytes;
+}
+
+size_t EpoxyHeap::unused() const {
+  size_t used = this->used();
+  size_t committed = capacity();
+  return committed - used;
+}
+
+MemoryUsage EpoxyHeap::memory_usage() {
+  size_t used = this->used();
+  size_t committed = capacity();
+  return MemoryUsage(InitialHeapSize, used, committed, max_capacity());
 }
 
 bool EpoxyHeap::is_in(const void* p) const {
@@ -173,11 +186,8 @@ HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
                   size * HeapWordSize / K);
   }
 
-  HeapWord* res = allocate_work(size);
-  if (res != nullptr) {
-    *actual_size = size;
-  }
-  return res;
+  // Take the rest of the current page if it can hold at least min_size.
+  return _global_region->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
 }
 
 HeapWord* EpoxyHeap::mem_allocate(size_t size) {

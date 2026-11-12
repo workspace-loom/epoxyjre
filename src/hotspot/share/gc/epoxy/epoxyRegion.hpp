@@ -55,6 +55,13 @@ public:
   // page gets a contiguous run of pages to itself.
   HeapWord* allocate(size_t size_in_words);
 
+  // Thread-safe. For a caller that can use any size between min_words and
+  // desired_words (a TLAB refill): takes what is left of the current page when
+  // that is at least min_words, so the tail is not abandoned. desired_words
+  // must not exceed one page. Sets *actual_words; returns null when no pages
+  // are left.
+  HeapWord* allocate(size_t min_words, size_t desired_words, size_t* actual_words);
+
   // Every object in every page, in the order the pages were taken. Requires
   // that no thread is allocating (a safepoint, or a single-threaded caller).
   void object_iterate(ObjectClosure* cl);

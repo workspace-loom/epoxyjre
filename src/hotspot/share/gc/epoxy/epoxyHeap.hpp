@@ -87,6 +87,12 @@ public:
   size_t capacity()     const override;
   size_t used()         const override;
 
+  // used() and capacity() change under allocating threads without Heap_lock.
+  // These read used first: committed memory only grows and is raised before
+  // a page is counted as used, so that order can never show used > committed.
+  size_t unused() const override;
+  MemoryUsage memory_usage() override;
+
   bool is_in(const void* p) const override;
 
   bool requires_barriers(stackChunkOop obj) const override { return false; }
@@ -99,7 +105,9 @@ public:
                               size_t* actual_size) override;
 
   // TLAB allocation
-  size_t tlab_capacity()         const override { return capacity();     }
+  // Not the committed size: that is near zero at start-up and would give the
+  // first threads the smallest possible TLAB for good.
+  size_t tlab_capacity()         const override { return max_capacity(); }
   size_t tlab_used()             const override { return used();         }
   size_t max_tlab_size()         const override { return _max_tlab_size; }
   size_t unsafe_max_tlab_alloc() const override;
