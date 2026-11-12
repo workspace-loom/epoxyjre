@@ -37,6 +37,9 @@ private:
   EpoxyPageAllocator* const _pages;
   const char* const         _name;
   const size_t              _page_words;
+  const bool                _scratch;
+  EpoxyRegion*              _parent;       // enclosing scratch region of the same thread
+  uint                      _depth;        // 0 for a region with no parent
 
   EpoxyPage* volatile _current;      // page small allocations bump into; null before the first one
   EpoxyPage*          _first;        // pages in the order they were taken
@@ -48,7 +51,15 @@ private:
   HeapWord* allocate_run(size_t size_in_words);
 
 public:
-  EpoxyRegion(EpoxyPageAllocator* pages, const char* name);
+  EpoxyRegion(EpoxyPageAllocator* pages, const char* name, bool scratch = false);
+
+  bool is_scratch() const          { return _scratch; }
+  EpoxyRegion* parent() const      { return _parent; }
+  uint depth() const               { return _depth; }
+  void set_parent(EpoxyRegion* parent) {
+    _parent = parent;
+    _depth = (parent == nullptr) ? 0 : parent->depth() + 1;
+  }
 
   // Thread-safe. Returns size_in_words of memory, or null when no pages are
   // left. size_in_words must be object aligned. A request larger than one
@@ -65,6 +76,13 @@ public:
   // Every object in every page, in the order the pages were taken. Requires
   // that no thread is allocating (a safepoint, or a single-threaded caller).
   void object_iterate(ObjectClosure* cl);
+
+  // Gives up every page. A page with no promoted object is freed without
+  // being looked at; the others are handed back through *kept as a list
+  // linked by next(), no longer scratch and owned by nobody. Only for a
+  // region that no thread is allocating in. The region is empty afterwards
+  // and may be used again.
+  void release(EpoxyPage** kept);
 
   size_t used_bytes() const;
   const char* name() const { return _name; }

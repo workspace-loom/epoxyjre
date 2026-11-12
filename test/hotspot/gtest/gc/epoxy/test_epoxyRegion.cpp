@@ -250,3 +250,88 @@ TEST_VM_F(EpoxyRegionTest, mid_size_request_moves_to_the_fresh_page_when_it_is_r
   EXPECT_NE(_allocator->page_for(b), _allocator->page_for(a));
   EXPECT_EQ(c, b + 1000);
 }
+
+// ---- scratch regions: page kind, promoted counts, release ----
+
+TEST_VM_F(EpoxyRegionTest, scratch_region_marks_its_pages) {
+  HeapWord* g = allocate_object(aligned_words(8));
+  ASSERT_NE(g, (HeapWord*)nullptr);
+  EXPECT_FALSE(_allocator->is_scratch(g));
+
+  EpoxyRegion scratch(_allocator, "scratch", true /* scratch */);
+  HeapWord* s = scratch.allocate(aligned_words(8));
+  HeapWord* big = scratch.allocate(aligned_words(2 * RegionPageWords + 8));
+  ASSERT_NE(s, (HeapWord*)nullptr);
+  ASSERT_NE(big, (HeapWord*)nullptr);
+  EXPECT_TRUE(scratch.is_scratch());
+  EXPECT_TRUE(_allocator->is_scratch(s));
+  EXPECT_TRUE(_allocator->is_scratch(big));
+  // Every page of a run is scratch, not only the first.
+  EXPECT_TRUE(_allocator->is_scratch(big + 2 * RegionPageWords));
+  EXPECT_FALSE(_allocator->is_scratch(_base - 1));
+
+  EpoxyPage* kept = nullptr;
+  scratch.release(&kept);
+}
+
+TEST_VM_F(EpoxyRegionTest, release_frees_pages_without_promoted_objects) {
+  EpoxyRegion scratch(_allocator, "scratch", true);
+  HeapWord* first = nullptr;
+  for (int i = 0; i < 5; i++) {
+    HeapWord* p = scratch.allocate(RegionPageWords);
+    ASSERT_NE(p, (HeapWord*)nullptr);
+    if (first == nullptr) first = p;
+  }
+  ASSERT_NE(scratch.allocate(aligned_words(3 * RegionPageWords)), (HeapWord*)nullptr);
+  EXPECT_EQ(_allocator->used_pages(), (size_t)8);
+
+  EpoxyPage* kept = (EpoxyPage*)0x1;
+  scratch.release(&kept);
+  EXPECT_EQ(kept, (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->used_pages(), (size_t)0);
+  EXPECT_EQ(scratch.used_bytes(), (size_t)0);
+  EXPECT_FALSE(_allocator->is_scratch(first));
+  EXPECT_EQ(_allocator->page_for(first), (EpoxyPage*)nullptr);
+
+  // The region can be used again after release.
+  ASSERT_NE(scratch.allocate(aligned_words(8)), (HeapWord*)nullptr);
+  EXPECT_EQ(_allocator->used_pages(), (size_t)1);
+  scratch.release(&kept);
+}
+
+TEST_VM_F(EpoxyRegionTest, release_keeps_pages_with_promoted_objects) {
+  EpoxyRegion scratch(_allocator, "scratch", true);
+  HeapWord* a = scratch.allocate(RegionPageWords);
+  HeapWord* b = scratch.allocate(RegionPageWords);
+  HeapWord* c = scratch.allocate(RegionPageWords);
+  HeapWord* run = scratch.allocate(aligned_words(2 * RegionPageWords + 8));
+  ASSERT_NE(run, (HeapWord*)nullptr);
+  EXPECT_EQ(_allocator->used_pages(), (size_t)6);
+
+  _allocator->page_for(b)->note_promoted();
+  _allocator->page_for(run)->note_promoted();
+  _allocator->page_for(run)->note_promoted();
+
+  EpoxyPage* kept = nullptr;
+  scratch.release(&kept);
+
+  // Exactly the page of b and the 3-page run survive, and are no longer scratch.
+  EXPECT_EQ(_allocator->used_pages(), (size_t)4);
+  int kept_count = 0;
+  bool saw_b = false, saw_run = false;
+  for (EpoxyPage* p = kept; p != nullptr; p = p->next()) {
+    kept_count++;
+    saw_b |= (p->bottom() == b);
+    saw_run |= (p->bottom() == run);
+    EXPECT_EQ(p->owner(), (EpoxyRegion*)nullptr);
+    EXPECT_GT(p->promoted_count(), 0u);
+  }
+  EXPECT_EQ(kept_count, 2);
+  EXPECT_TRUE(saw_b);
+  EXPECT_TRUE(saw_run);
+  EXPECT_FALSE(_allocator->is_scratch(b));
+  EXPECT_FALSE(_allocator->is_scratch(run + RegionPageWords));
+  EXPECT_EQ(_allocator->page_for(a), (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->page_for(c), (EpoxyPage*)nullptr);
+  EXPECT_NE(_allocator->page_for(b), (EpoxyPage*)nullptr);
+}

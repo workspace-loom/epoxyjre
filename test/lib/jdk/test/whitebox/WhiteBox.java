@@ -561,6 +561,13 @@ public class WhiteBox {
   // Don't use these methods directly
   // Use jdk.test.whitebox.gc.GC class instead.
   public native boolean isGCSupported(int name);
+
+  // Epoxy scratch regions (test API). A test must not keep a local variable
+  // referring to an object allocated inside a region across epoxyExitScratch().
+  public native boolean epoxyEnterScratch();
+  public native void    epoxyExitScratch();
+  public native int     epoxyScratchDepth();
+  public native boolean epoxyIsPromoted(Object o);
   public native boolean isGCSelected(int name);
   public native boolean isGCSelectedErgonomically();
 

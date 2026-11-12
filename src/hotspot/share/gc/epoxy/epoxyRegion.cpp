@@ -26,10 +26,13 @@
 #include "runtime/mutexLocker.hpp"
 #include "utilities/align.hpp"
 
-EpoxyRegion::EpoxyRegion(EpoxyPageAllocator* pages, const char* name) :
+EpoxyRegion::EpoxyRegion(EpoxyPageAllocator* pages, const char* name, bool scratch) :
     _pages(pages),
     _name(name),
     _page_words(pages->page_size_bytes() / HeapWordSize),
+    _scratch(scratch),
+    _parent(nullptr),
+    _depth(0),
     _current(nullptr),
     _first(nullptr),
     _last(nullptr),
@@ -40,6 +43,9 @@ EpoxyRegion::EpoxyRegion(EpoxyPageAllocator* pages, const char* name) :
 void EpoxyRegion::append(EpoxyPage* page) {
   page->set_owner(this);
   page->set_next(nullptr);
+  if (_scratch) {
+    _pages->set_scratch(page, true);
+  }
   if (_last == nullptr) {
     _first = page;
   } else {
@@ -161,6 +167,31 @@ void EpoxyRegion::object_iterate(ObjectClosure* cl) {
     }
     assert(p == top, "page must be walkable to exactly its top");
   }
+}
+
+void EpoxyRegion::release(EpoxyPage** kept) {
+  MutexLocker ml(&_lock, Mutex::_no_safepoint_check_flag);
+
+  EpoxyPage* kept_list = nullptr;
+  EpoxyPage* page = _first;
+  while (page != nullptr) {
+    EpoxyPage* next = page->next();
+    if (page->promoted_count() == 0) {
+      _pages->free(page);
+    } else {
+      _pages->set_scratch(page, false);
+      page->set_owner(nullptr);
+      page->set_next(kept_list);
+      kept_list = page;
+    }
+    page = next;
+  }
+
+  AtomicAccess::release_store(&_current, (EpoxyPage*)nullptr);
+  _first = nullptr;
+  _last = nullptr;
+  AtomicAccess::store(&_owned_pages, (size_t)0);
+  *kept = kept_list;
 }
 
 size_t EpoxyRegion::used_bytes() const {

@@ -36,7 +36,11 @@
 #include "memory/metaspaceUtils.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/universe.hpp"
+#include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
+#include "runtime/javaThread.hpp"
+#include "runtime/safepoint.hpp"
+#include "runtime/threads.hpp"
 #include "services/memoryUsage.hpp"
 #include "utilities/ostream.hpp"
 
@@ -83,6 +87,81 @@ size_t EpoxyHeap::used() const {
   return _page_allocator->used_pages() * _page_size_bytes;
 }
 
+EpoxyRegion* EpoxyHeap::allocation_region() const {
+  EpoxyRegion* scratch = EpoxyThreadLocalData::scratch(Thread::current());
+  return scratch != nullptr ? scratch : _global_region;
+}
+
+uint EpoxyHeap::scratch_depth(Thread* thread) {
+  EpoxyRegion* scratch = EpoxyThreadLocalData::scratch(thread);
+  return scratch == nullptr ? 0 : scratch->depth() + 1;
+}
+
+bool EpoxyHeap::enter_scratch(JavaThread* thread) {
+  assert(thread == JavaThread::current(), "a thread enters its own regions");
+  if (!Arguments::is_interpreter_only()) {
+    return false;
+  }
+  // Allocation after this point must come from the new region.
+  if (UseTLAB) {
+    thread->tlab().retire();
+  }
+  EpoxyRegion* region = new EpoxyRegion(_page_allocator, "scratch", true /* scratch */);
+  region->set_parent(EpoxyThreadLocalData::scratch(thread));
+  EpoxyThreadLocalData::set_scratch(thread, region);
+  EpoxyThreadLocalData::set_tlab_words(thread, 0);
+  return true;
+}
+
+void EpoxyHeap::exit_scratch(JavaThread* thread) {
+  assert(thread == JavaThread::current(), "a thread leaves its own regions");
+  EpoxyRegion* region = EpoxyThreadLocalData::scratch(thread);
+  assert(region != nullptr, "not in a scratch region");
+
+  // The TLAB lies in a page that is about to go.
+  if (UseTLAB) {
+    thread->tlab().retire();
+  }
+  EpoxyThreadLocalData::set_scratch(thread, region->parent());
+  EpoxyThreadLocalData::set_tlab_words(thread, 0);
+
+  EpoxyPage* kept = nullptr;
+  region->release(&kept);
+  if (kept != nullptr) {
+    EpoxyPage* last = kept;
+    while (last->next() != nullptr) {
+      last = last->next();
+    }
+    MutexLocker ml(&_adopted_lock, Mutex::_no_safepoint_check_flag);
+    last->set_next(_adopted_pages);
+    _adopted_pages = kept;
+  }
+  delete region;
+}
+
+void EpoxyHeap::exit_all_scratch(Thread* thread) {
+  // A thread that ends inside regions gives them all up. Its TLAB has been
+  // retired by the thread exit path already.
+  EpoxyRegion* region = EpoxyThreadLocalData::scratch(thread);
+  while (region != nullptr) {
+    EpoxyRegion* parent = region->parent();
+    EpoxyPage* kept = nullptr;
+    region->release(&kept);
+    if (kept != nullptr) {
+      EpoxyPage* last = kept;
+      while (last->next() != nullptr) {
+        last = last->next();
+      }
+      MutexLocker ml(&_adopted_lock, Mutex::_no_safepoint_check_flag);
+      last->set_next(_adopted_pages);
+      _adopted_pages = kept;
+    }
+    delete region;
+    region = parent;
+  }
+  EpoxyThreadLocalData::set_scratch(thread, nullptr);
+}
+
 size_t EpoxyHeap::unused() const {
   size_t used = this->used();
   size_t committed = capacity();
@@ -96,6 +175,9 @@ MemoryUsage EpoxyHeap::memory_usage() {
 }
 
 bool EpoxyHeap::is_in(const void* p) const {
+  if (_page_allocator == nullptr) {
+    return false;  // asked before the heap is set up, for example while reporting an early crash
+  }
   EpoxyPage* page = _page_allocator->page_for(p);
   return page != nullptr && p < (const void*)page->top();
 }
@@ -135,7 +217,7 @@ EpoxyHeap* EpoxyHeap::heap() {
 HeapWord* EpoxyHeap::allocate_work(size_t size) {
   assert(is_object_aligned(size), "Allocation size should be aligned: %zu", size);
 
-  HeapWord* res = _global_region->allocate(size);
+  HeapWord* res = allocation_region()->allocate(size);
   if (res == nullptr) {
     return nullptr;
   }
@@ -192,7 +274,7 @@ HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
   }
 
   // Take the rest of the current page if it can hold at least min_size.
-  HeapWord* res = _global_region->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
+  HeapWord* res = allocation_region()->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
   if (res != nullptr) {
     EpoxyThreadLocalData::set_tlab_words(thread, size);
   }
@@ -204,7 +286,8 @@ HeapWord* EpoxyHeap::mem_allocate(size_t size) {
 }
 
 HeapWord* EpoxyHeap::allocate_loaded_archive_space(size_t size) {
-  return allocate_work(size);
+  // Archived objects live for the whole run.
+  return _global_region->allocate(size);
 }
 
 void EpoxyHeap::collect(GCCause::Cause cause) {
@@ -230,8 +313,23 @@ void EpoxyHeap::do_full_collection(bool clear_all_soft_refs) {
   collect(gc_cause());
 }
 
+// Walks every scratch region of one thread.
+class EpoxyScratchIterateClosure : public ThreadClosure {
+  ObjectClosure* _cl;
+public:
+  EpoxyScratchIterateClosure(ObjectClosure* cl) : _cl(cl) {}
+  void do_thread(Thread* thread) override {
+    for (EpoxyRegion* r = EpoxyThreadLocalData::scratch(thread); r != nullptr; r = r->parent()) {
+      r->object_iterate(_cl);
+    }
+  }
+};
+
 void EpoxyHeap::object_iterate(ObjectClosure *cl) {
+  assert(SafepointSynchronize::is_at_safepoint(), "the heap is walked only at a safepoint");
   _global_region->object_iterate(cl);
+  EpoxyScratchIterateClosure scratch(cl);
+  Threads::java_threads_do(&scratch);
 }
 
 void EpoxyHeap::print_heap_on(outputStream *st) const {

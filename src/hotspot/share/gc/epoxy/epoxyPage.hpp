@@ -20,6 +20,7 @@
 #ifndef SHARE_GC_EPOXY_EPOXYPAGE_HPP
 #define SHARE_GC_EPOXY_EPOXYPAGE_HPP
 
+#include "runtime/atomicAccess.hpp"
 #include "utilities/globalDefinitions.hpp"
 
 class EpoxyPageAllocator;
@@ -38,10 +39,11 @@ private:
   HeapWord*          _bottom;
   HeapWord*          _end;
   HeapWord* volatile _top;
-  uint               _run_length;  // pages in the run this page starts; 0 inside a run or when free
+  volatile uint      _run_length;  // pages in the run this page starts; 0 inside a run or when free
   uint               _run_start;   // index of the first page of the run this page belongs to
   EpoxyRegion*       _owner;
   EpoxyPage*         _next;
+  volatile uint      _promoted;    // promoted objects that start in this run
 
 public:
   HeapWord* bottom() const            { return _bottom; }
@@ -50,7 +52,11 @@ public:
   void set_top(HeapWord* top)         { _top = top; }
   HeapWord* volatile* top_addr()      { return &_top; }
 
-  uint run_length() const             { return _run_length; }
+  uint run_length() const             { return AtomicAccess::load_acquire(&_run_length); }
+
+  // Promoted objects keep their page alive when its scratch region is released.
+  void note_promoted()                { AtomicAccess::inc(&_promoted); }
+  uint promoted_count() const         { return AtomicAccess::load(&_promoted); }
 
   EpoxyRegion* owner() const          { return _owner; }
   void set_owner(EpoxyRegion* owner)  { _owner = owner; }

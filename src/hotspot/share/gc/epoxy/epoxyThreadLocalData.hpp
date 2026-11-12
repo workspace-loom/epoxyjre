@@ -29,6 +29,8 @@
 #include "runtime/javaThread.hpp"
 #include "utilities/debug.hpp"
 
+class EpoxyRegion;
+
 // Per-thread state kept in the thread's GC data area.
 class EpoxyThreadLocalData {
 private:
@@ -37,7 +39,11 @@ private:
   // comes back for more, so a short-lived thread costs little heap.
   size_t _tlab_words;
 
-  EpoxyThreadLocalData() : _tlab_words(0) {}
+  // Innermost scratch region this thread is in, or null. Regions nest
+  // through EpoxyRegion::parent().
+  EpoxyRegion* _scratch;
+
+  EpoxyThreadLocalData() : _tlab_words(0), _scratch(nullptr) {}
 
   static EpoxyThreadLocalData* data(Thread* thread) {
     assert(UseEpoxy, "Sanity");
@@ -55,6 +61,9 @@ public:
 
   static size_t tlab_words(Thread* thread)                { return data(thread)->_tlab_words; }
   static void set_tlab_words(Thread* thread, size_t words) { data(thread)->_tlab_words = words; }
+
+  static EpoxyRegion* scratch(Thread* thread)                  { return data(thread)->_scratch; }
+  static void set_scratch(Thread* thread, EpoxyRegion* region) { data(thread)->_scratch = region; }
 };
 
 #endif // SHARE_GC_EPOXY_EPOXYTHREADLOCALDATA_HPP

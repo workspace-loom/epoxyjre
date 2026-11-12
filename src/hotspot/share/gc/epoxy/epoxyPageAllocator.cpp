@@ -25,6 +25,7 @@
 #include "runtime/os.hpp"
 #include "utilities/align.hpp"
 #include "utilities/bitMap.inline.hpp"
+#include "utilities/copy.hpp"
 #include "utilities/powerOfTwo.hpp"
 
 EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_bytes, bool pre_committed) :
@@ -41,7 +42,10 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
   assert(is_aligned(reserved.start(), page_size_bytes), "start must be page aligned");
   assert(is_aligned(reserved.end(), page_size_bytes), "end must be page aligned");
 
+  assert(_max_pages <= UINT_MAX, "page numbers are kept in 32 bits");
   _pages = NEW_C_HEAP_ARRAY(EpoxyPage, _max_pages, mtGC);
+  _kind = NEW_C_HEAP_ARRAY(uint8_t, _max_pages, mtGC);
+  memset(_kind, 0, _max_pages);
   for (size_t i = 0; i < _max_pages; i++) {
     EpoxyPage* page = &_pages[i];
     page->_bottom = (HeapWord*)page_base(i);
@@ -51,6 +55,7 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
     page->_run_start = (uint)i;
     page->_owner = nullptr;
     page->_next = nullptr;
+    page->_promoted = 0;
   }
   _free.set_range(0, _max_pages);
   if (pre_committed) {
@@ -61,6 +66,7 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
 
 EpoxyPageAllocator::~EpoxyPageAllocator() {
   FREE_C_HEAP_ARRAY(_pages);
+  FREE_C_HEAP_ARRAY(_kind);
 }
 
 size_t EpoxyPageAllocator::find_free_run(size_t num_pages) const {
@@ -87,7 +93,7 @@ bool EpoxyPageAllocator::commit_run(size_t start, size_t num_pages) {
       os::pretouch_memory(page_base(i), page_base(i + 1));
     }
     _committed.set_bit(i);
-    _committed_bytes += _page_size_bytes;
+    AtomicAccess::store(&_committed_bytes, _committed_bytes + _page_size_bytes);
   }
   return true;
 }
@@ -108,18 +114,20 @@ EpoxyPage* EpoxyPageAllocator::allocate(uint num_pages) {
   }
 
   _free.clear_range(start, start + num_pages);
-  _used_pages += num_pages;
+  AtomicAccess::store(&_used_pages, _used_pages + num_pages);
 
-  for (size_t i = start; i < start + num_pages; i++) {
-    _pages[i]._run_start = (uint)start;
-    _pages[i]._run_length = 0;
-  }
+  // page_for() reads this metadata without the lock. Everything a reader
+  // uses is written before _run_length, which is what makes the run visible.
   EpoxyPage* first = &_pages[start];
-  first->_run_length = num_pages;
   first->_end = (HeapWord*)page_base(start + num_pages);
   first->_top = first->_bottom;
   first->_owner = nullptr;
   first->_next = nullptr;
+  first->_promoted = 0;
+  for (size_t i = start; i < start + num_pages; i++) {
+    AtomicAccess::store(&_pages[i]._run_start, (uint)start);
+  }
+  AtomicAccess::release_store(&first->_run_length, num_pages);
   return first;
 }
 
@@ -132,17 +140,32 @@ void EpoxyPageAllocator::free(EpoxyPage* first) {
   assert(num_pages > 0, "not the first page of an allocated run");
   assert(!_free.at(start), "double free of page %zu", start);
 
+  // Hide the run from page_for() before anything else changes.
+  AtomicAccess::release_store(&first->_run_length, 0u);
   for (size_t i = start; i < start + num_pages; i++) {
-    _pages[i]._run_start = (uint)i;
-    _pages[i]._run_length = 0;
+    AtomicAccess::store(&_pages[i]._run_start, (uint)i);
+    _kind[i] = 0;
   }
+#ifdef ASSERT
+  // Make any use of a stale reference into this memory fail fast.
+  Copy::fill_to_words(first->_bottom, pointer_delta(first->_end, first->_bottom), badHeapWordVal);
+#endif
   first->_end = (HeapWord*)page_base(start + 1);
   first->_top = first->_bottom;
   first->_owner = nullptr;
   first->_next = nullptr;
+  first->_promoted = 0;
 
   _free.set_range(start, start + num_pages);
-  _used_pages -= num_pages;
+  AtomicAccess::store(&_used_pages, _used_pages - num_pages);
+}
+
+void EpoxyPageAllocator::set_scratch(EpoxyPage* first, bool scratch) {
+  size_t start = pointer_delta(first, _pages, sizeof(EpoxyPage));
+  size_t num_pages = first->run_length();
+  for (size_t i = start; i < start + num_pages; i++) {
+    AtomicAccess::store(&_kind[i], (uint8_t)(scratch ? 1 : 0));
+  }
 }
 
 EpoxyPage* EpoxyPageAllocator::page_for(const void* addr) const {
@@ -150,10 +173,12 @@ EpoxyPage* EpoxyPageAllocator::page_for(const void* addr) const {
     return nullptr;
   }
   size_t index = pointer_delta(addr, _reserved.start(), 1) >> _page_shift;
-  // Unlocked read: a caller asking about an address inside a live object
-  // holds that object's page allocated, so its entries are stable.
-  EpoxyPage* first = &_pages[_pages[index]._run_start];
-  return first->_run_length == 0 ? nullptr : first;
+  // Unlocked read. A caller asking about an address inside a live object holds
+  // that object's page allocated, so its entries are stable. For any other
+  // address the answer may be stale, but it is always a page that was
+  // allocated at some point during the call, or null.
+  EpoxyPage* first = &_pages[AtomicAccess::load(&_pages[index]._run_start)];
+  return first->run_length() == 0 ? nullptr : first;
 }
 
 size_t EpoxyPageAllocator::used_pages() const {

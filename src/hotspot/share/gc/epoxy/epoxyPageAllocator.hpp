@@ -39,6 +39,7 @@ private:
   const size_t    _max_pages;
 
   EpoxyPage*      _pages;       // one entry per page, indexed by page number
+  uint8_t*        _kind;        // one byte per page: 1 if the page belongs to a scratch region
   CHeapBitMap     _free;        // bit set: the page is free
   CHeapBitMap     _committed;   // bit set: the page's memory is committed
   size_t          _used_pages;
@@ -68,6 +69,15 @@ public:
   // First page of the allocated run containing addr; null for an address
   // outside the heap or in a free page.
   EpoxyPage* page_for(const void* addr) const;
+
+  // Scratch pages are the ones whose objects may be freed with their region.
+  // The answer comes from a byte table so that compiled code can ask with one load.
+  bool is_scratch(const void* addr) const {
+    return _reserved.contains(addr) && _kind[pointer_delta(addr, _reserved.start(), 1) >> _page_shift] != 0;
+  }
+  void set_scratch(EpoxyPage* first, bool scratch);
+  const uint8_t* kind_table() const { return _kind; }
+  int page_shift() const           { return _page_shift; }
 
   size_t page_size_bytes() const { return _page_size_bytes; }
   size_t max_pages() const       { return _max_pages; }

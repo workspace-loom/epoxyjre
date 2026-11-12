@@ -46,6 +46,9 @@
 #include "compiler/methodMatcher.hpp"
 #include "gc/shared/concurrentGCBreakpoints.hpp"
 #include "gc/shared/gcConfig.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyHeap.hpp"
+#endif
 #include "gc/shared/genArguments.hpp"
 #include "jfr/periodic/sampling/jfrCPUTimeThreadSampler.hpp"
 #include "jvm.h"
@@ -405,6 +408,29 @@ WB_ENTRY(jint, WB_StressVirtualSpaceResize(JNIEnv* env, jobject o,
   return wb_stress_virtual_space_resize((size_t) reserved_space_size,
                                         (size_t) magnitude, (size_t) iterations);
 WB_END
+
+#if INCLUDE_EPOXY
+WB_ENTRY(jboolean, WB_EpoxyEnterScratch(JNIEnv* env, jobject o))
+  if (!UseEpoxy) {
+    return false;
+  }
+  return EpoxyHeap::heap()->enter_scratch(thread);
+WB_END
+
+WB_ENTRY(void, WB_EpoxyExitScratch(JNIEnv* env, jobject o))
+  if (UseEpoxy && EpoxyHeap::scratch_depth(thread) > 0) {
+    EpoxyHeap::heap()->exit_scratch(thread);
+  }
+WB_END
+
+WB_ENTRY(jint, WB_EpoxyScratchDepth(JNIEnv* env, jobject o))
+  return UseEpoxy ? (jint)EpoxyHeap::scratch_depth(thread) : 0;
+WB_END
+
+WB_ENTRY(jboolean, WB_EpoxyIsPromoted(JNIEnv* env, jobject o, jobject obj))
+  return false;
+WB_END
+#endif // INCLUDE_EPOXY
 
 WB_ENTRY(jboolean, WB_IsGCSupported(JNIEnv* env, jobject o, jint name))
   return GCConfig::is_gc_supported((CollectedHeap::Name)name);
@@ -3032,6 +3058,12 @@ static JNINativeMethod methods[] = {
                                                       (void*)&WB_AddCompilerDirective },
   {CC"removeCompilerDirective",   CC"(I)V",           (void*)&WB_RemoveCompilerDirective },
   {CC"isGCSupported",             CC"(I)Z",           (void*)&WB_IsGCSupported},
+#if INCLUDE_EPOXY
+  {CC"epoxyEnterScratch",         CC"()Z",            (void*)&WB_EpoxyEnterScratch},
+  {CC"epoxyExitScratch",          CC"()V",            (void*)&WB_EpoxyExitScratch},
+  {CC"epoxyScratchDepth",         CC"()I",            (void*)&WB_EpoxyScratchDepth},
+  {CC"epoxyIsPromoted",           CC"(Ljava/lang/Object;)Z", (void*)&WB_EpoxyIsPromoted},
+#endif
   {CC"isGCSelected",              CC"(I)Z",           (void*)&WB_IsGCSelected},
   {CC"isGCSelectedErgonomically", CC"()Z",            (void*)&WB_IsGCSelectedErgonomically},
   {CC"supportsConcurrentGCBreakpoints", CC"()Z",      (void*)&WB_SupportsConcurrentGCBreakpoints},

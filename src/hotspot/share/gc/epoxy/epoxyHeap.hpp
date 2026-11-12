@@ -30,8 +30,10 @@
 #include "gc/epoxy/epoxyMonitoringSupport.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "runtime/atomic.hpp"
+#include "runtime/mutex.hpp"
 #include "services/memoryManager.hpp"
 
+class EpoxyPage;
 class EpoxyPageAllocator;
 class EpoxyRegion;
 
@@ -43,6 +45,8 @@ private:
   GCMemoryManager _memory_manager;
   EpoxyPageAllocator* _page_allocator;
   EpoxyRegion* _global_region;
+  EpoxyPage* _adopted_pages;     // pages kept from released scratch regions
+  Mutex _adopted_lock;
   size_t _page_size_bytes;
   size_t _max_tlab_size;
   size_t _step_counter_update;
@@ -62,6 +66,8 @@ public:
           _memory_manager("Epoxy Heap"),
           _page_allocator(nullptr),
           _global_region(nullptr),
+          _adopted_pages(nullptr),
+          _adopted_lock(Mutex::nosafepoint, "EpoxyAdopted_lock"),
           _page_size_bytes(0) {};
 
   Name kind() const override {
@@ -81,6 +87,18 @@ public:
 
   EpoxyPageAllocator* page_allocator() const { return _page_allocator; }
   EpoxyRegion* global_region() const         { return _global_region; }
+
+  // Scratch regions. A thread inside one allocates from it; leaving it frees
+  // every page that holds no promoted object. Entering is refused (false)
+  // while compiled code could run, because only the interpreter and the VM's
+  // own stores have the barrier that promotes escaping objects.
+  bool enter_scratch(JavaThread* thread);
+  void exit_scratch(JavaThread* thread);
+  void exit_all_scratch(Thread* thread);
+  static uint scratch_depth(Thread* thread);
+
+  // The region the calling thread allocates in.
+  EpoxyRegion* allocation_region() const;
 
   // Sizes are in whole pages: a page counts as used once a region owns it.
   size_t max_capacity() const override { return _reserved.byte_size(); }

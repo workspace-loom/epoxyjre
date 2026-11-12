@@ -24,6 +24,7 @@
  */
 
 #include "gc/epoxy/epoxyBarrierSet.hpp"
+#include "gc/epoxy/epoxyHeap.hpp"
 #include "gc/epoxy/epoxyThreadLocalData.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
@@ -48,5 +49,6 @@ void EpoxyBarrierSet::on_thread_create(Thread *thread) {
 }
 
 void EpoxyBarrierSet::on_thread_destroy(Thread *thread) {
+  EpoxyHeap::heap()->exit_all_scratch(thread);
   EpoxyThreadLocalData::destroy(thread);
 }
