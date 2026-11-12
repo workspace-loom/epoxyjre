@@ -271,6 +271,7 @@ tier1_gc = \
   :tier1_gc_2 \
   :tier1_gc_gcbasher \
   :tier1_gc_epsilon \
+  :tier1_gc_epoxy \
   :tier1_gc_shenandoah
 
 hotspot_not_fast_gc = \
@@ -288,6 +289,7 @@ tier1_gc_2 = \
   -gc/stress \
   -gc/metaspace/CompressedClassSpaceSizeInJmapHeap.java \
   -gc/epsilon \
+  -gc/epoxy \
   -gc/shenandoah
 
 hotspot_gc_epsilon = \
@@ -296,6 +298,9 @@ hotspot_gc_epsilon = \
 
 tier1_gc_epsilon = \
   gc/epsilon/
+
+tier1_gc_epoxy = \
+  gc/epoxy/
 
 tier2_gc_epsilon =
 

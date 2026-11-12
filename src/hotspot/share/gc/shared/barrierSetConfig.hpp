@@ -30,6 +30,7 @@
 // Do something for each barrier set part of the build.
 #define FOR_EACH_BARRIER_SET_DO(f)                   \
   f(CardTableBarrierSet)                             \
+  EPOXY_ONLY(f(EpoxyBarrierSet))                     \
   EPSILONGC_ONLY(f(EpsilonBarrierSet))               \
   G1GC_ONLY(f(G1BarrierSet))                         \
   SHENANDOAHGC_ONLY(f(ShenandoahBarrierSet))         \

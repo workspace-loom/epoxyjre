@@ -142,6 +142,11 @@ ifneq ($(call check-jvm-feature, serialgc), true)
   JVM_EXCLUDE_PATTERNS += gc/serial
 endif
 
+ifneq ($(call check-jvm-feature, epoxy), true)
+  JVM_CFLAGS_FEATURES += -DINCLUDE_EPOXY=0
+  JVM_EXCLUDE_PATTERNS += gc/epoxy
+endif
+
 ifneq ($(call check-jvm-feature, epsilongc), true)
   JVM_CFLAGS_FEATURES += -DINCLUDE_EPSILONGC=0
   JVM_EXCLUDE_PATTERNS += gc/epsilon

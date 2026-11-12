@@ -27,6 +27,9 @@
 #include "runtime/java.hpp"
 #include "runtime/os.hpp"
 #include "utilities/macros.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyArguments.hpp"
+#endif
 #if INCLUDE_EPSILONGC
 #include "gc/epsilon/epsilonArguments.hpp"
 #endif
@@ -56,6 +59,7 @@ struct IncludedGC {
       _flag(flag), _name(name), _arguments(arguments), _hs_err_name(hs_err_name) {}
 };
 
+      EPOXY_ONLY(static EpoxyArguments      epoxyArguments;)
    EPSILONGC_ONLY(static EpsilonArguments    epsilonArguments;)
         G1GC_ONLY(static G1Arguments         g1Arguments;)
   PARALLELGC_ONLY(static ParallelArguments   parallelArguments;)
@@ -66,6 +70,7 @@ SHENANDOAHGC_ONLY(static ShenandoahArguments shenandoahArguments;)
 // Table of included GCs, for translating between command
 // line flag, CollectedHeap::Name and GCArguments instance.
 static const IncludedGC IncludedGCs[] = {
+      EPOXY_ONLY_ARG(IncludedGC(UseEpoxy,           CollectedHeap::Epoxy,      epoxyArguments,      "epoxy"))
    EPSILONGC_ONLY_ARG(IncludedGC(UseEpsilonGC,       CollectedHeap::Epsilon,    epsilonArguments,    "epsilon gc"))
         G1GC_ONLY_ARG(IncludedGC(UseG1GC,            CollectedHeap::G1,         g1Arguments,         "g1 gc"))
   PARALLELGC_ONLY_ARG(IncludedGC(UseParallelGC,      CollectedHeap::Parallel,   parallelArguments,   "parallel gc"))
@@ -86,6 +91,7 @@ GCArguments* GCConfig::_arguments = nullptr;
 bool GCConfig::_gc_selected_ergonomically = false;
 
 void GCConfig::fail_if_non_included_gc_is_selected() {
+  NOT_EPOXY(       FAIL_IF_SELECTED(UseEpoxy));
   NOT_EPSILONGC(   FAIL_IF_SELECTED(UseEpsilonGC));
   NOT_G1GC(        FAIL_IF_SELECTED(UseG1GC));
   NOT_PARALLELGC(  FAIL_IF_SELECTED(UseParallelGC));

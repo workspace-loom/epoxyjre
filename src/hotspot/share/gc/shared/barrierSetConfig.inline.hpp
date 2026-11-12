@@ -29,6 +29,9 @@
 
 #include "gc/shared/cardTableBarrierSet.inline.hpp"
 
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyBarrierSet.hpp"
+#endif
 #if INCLUDE_EPSILONGC
 #include "gc/epsilon/epsilonBarrierSet.hpp"
 #endif

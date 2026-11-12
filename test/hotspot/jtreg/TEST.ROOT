@@ -65,6 +65,7 @@ requires.properties= \
     vm.gc.Serial \
     vm.gc.Parallel \
     vm.gc.Shenandoah \
+    vm.gc.Epoxy \
     vm.gc.Epsilon \
     vm.gc.Z \
     vm.cpu.features \

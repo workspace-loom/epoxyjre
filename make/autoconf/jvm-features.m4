@@ -44,7 +44,7 @@
 m4_define(jvm_features_valid, m4_normalize( \
     ifdef([custom_jvm_features_valid], custom_jvm_features_valid) \
     \
-    cds compiler1 compiler2 dtrace epsilongc g1gc jfr jni-check \
+    cds compiler1 compiler2 dtrace epoxy epsilongc g1gc jfr jni-check \
     jvmti link-time-opt management minimal opt-size parallelgc \
     serialgc services shenandoahgc vm-structs zero zgc \
 ))
@@ -58,6 +58,7 @@ m4_define(jvm_feature_desc_cds, [enable class data sharing (CDS)])
 m4_define(jvm_feature_desc_compiler1, [enable hotspot compiler C1])
 m4_define(jvm_feature_desc_compiler2, [enable hotspot compiler C2])
 m4_define(jvm_feature_desc_dtrace, [enable dtrace support])
+m4_define(jvm_feature_desc_epoxy, [include the Epoxy region heap (no garbage collector)])
 m4_define(jvm_feature_desc_epsilongc, [include the epsilon (no-op) garbage collector])
 m4_define(jvm_feature_desc_g1gc, [include the G1 garbage collector])
 m4_define(jvm_feature_desc_jfr, [enable JDK Flight Recorder (JFR)])
@@ -388,7 +389,7 @@ AC_DEFUN([JVM_FEATURES_PREPARE_VARIANT],
   if test "x$variant" = "xclient"; then
     JVM_FEATURES_VARIANT_FILTER="compiler2 link-time-opt opt-size"
   elif test "x$variant" = "xminimal"; then
-    JVM_FEATURES_VARIANT_FILTER="cds compiler2 dtrace epsilongc g1gc \
+    JVM_FEATURES_VARIANT_FILTER="cds compiler2 dtrace epoxy epsilongc g1gc \
         jfr jni-check jvmti management parallelgc services \
         shenandoahgc vm-structs zgc"
     if test "x$OPENJDK_TARGET_CPU" = xarm ; then

@@ -161,6 +161,20 @@
 #define NOT_EPSILONGC_RETURN_(code) { return code; }
 #endif // INCLUDE_EPSILONGC
 
+#ifndef INCLUDE_EPOXY
+#define INCLUDE_EPOXY 1
+#endif // INCLUDE_EPOXY
+
+#if INCLUDE_EPOXY
+#define EPOXY_ONLY(x) x
+#define EPOXY_ONLY_ARG(arg) arg,
+#define NOT_EPOXY(x)
+#else
+#define EPOXY_ONLY(x)
+#define EPOXY_ONLY_ARG(arg)
+#define NOT_EPOXY(x) x
+#endif // INCLUDE_EPOXY
+
 #ifndef INCLUDE_G1GC
 #define INCLUDE_G1GC 1
 #endif // INCLUDE_G1GC

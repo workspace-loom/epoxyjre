@@ -27,6 +27,9 @@
 
 #include "runtime/globals_shared.hpp"
 #include "utilities/macros.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxy_globals.hpp"
+#endif
 #if INCLUDE_EPSILONGC
 #include "gc/epsilon/epsilon_globals.hpp"
 #endif
@@ -52,6 +55,14 @@
                  product_pd,                                                \
                  range,                                                     \
                  constraint)                                                \
+                                                                            \
+  EPOXY_ONLY(GC_EPOXY_FLAGS(                                                \
+    develop,                                                                \
+    develop_pd,                                                             \
+    product,                                                                \
+    product_pd,                                                             \
+    range,                                                                  \
+    constraint))                                                            \
                                                                             \
   EPSILONGC_ONLY(GC_EPSILON_FLAGS(                                          \
     develop,                                                                \
@@ -111,6 +122,9 @@
                                                                             \
   product(bool, UseParallelGC, false,                                       \
           "Use the Parallel garbage collector.")                            \
+                                                                            \
+  product(bool, UseEpoxy, false,                                            \
+          "Use the Epoxy region heap (no garbage collector)")               \
                                                                             \
   product(bool, UseEpsilonGC, false, EXPERIMENTAL,                          \
           "Use the Epsilon (no-op) garbage collector")                      \
