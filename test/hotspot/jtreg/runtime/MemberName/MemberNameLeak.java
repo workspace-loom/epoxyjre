@@ -159,11 +159,11 @@ public class MemberNameLeak {
     }
 
     private static boolean supportsSTW(GC gc) {
-        return !(gc == GC.Epsilon);
+        return !(gc == GC.Epsilon || gc == GC.Epoxy);
     }
 
     private static boolean supportsConcurrent(GC gc) {
-        return !(gc == GC.Epsilon || gc == GC.Serial || gc == GC.Parallel);
+        return !(gc == GC.Epsilon || gc == GC.Epoxy || gc == GC.Serial || gc == GC.Parallel);
     }
 
     private static void test(GC gc) throws Throwable {

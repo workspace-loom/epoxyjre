@@ -28,6 +28,7 @@
  *          with -XX:TrimNativeHeapInterval enabled,should not violate lock ordering.
  * @requires vm.debug
  * @requires vm.gc != "Epsilon"
+ * @requires vm.gc != "Epoxy"
  * @library /test/lib
  * @modules java.compiler
  * @run main/othervm -Xms128m -Xmx128m

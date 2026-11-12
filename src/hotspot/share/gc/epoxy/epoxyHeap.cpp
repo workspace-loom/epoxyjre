@@ -28,6 +28,7 @@
 #include "gc/epoxy/epoxyMemoryPool.hpp"
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
+#include "gc/epoxy/epoxyThreadLocalData.hpp"
 #include "gc/shared/gcArguments.hpp"
 #include "gc/shared/locationPrinter.inline.hpp"
 #include "logging/log.hpp"
@@ -169,8 +170,12 @@ HeapWord* EpoxyHeap::allocate_work(size_t size) {
 HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
                                        size_t requested_size,
                                        size_t* actual_size) {
-  // Always honor boundaries and alignment. A TLAB is at most one page.
-  size_t size = clamp(requested_size, min_size, _max_tlab_size);
+  // A thread starts with the smallest TLAB and is given twice as much each
+  // time it comes back, up to one page. Threads that allocate little, or do
+  // not live long, then cost little heap.
+  Thread* thread = Thread::current();
+  size_t grown = EpoxyThreadLocalData::tlab_words(thread) * 2;
+  size_t size = clamp(MIN2(requested_size, grown), min_size, _max_tlab_size);
   size = align_up(size, MinObjAlignment);
 
   assert(min_size <= size, "Size honors min size: %zu <= %zu", min_size, size);
@@ -179,7 +184,7 @@ HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
   if (log_is_enabled(Trace, gc)) {
     ResourceMark rm;
     log_trace(gc)("TLAB size for \"%s\" (Requested: %zuK, Min: %zuK, Max: %zuK) -> %zuK",
-                  Thread::current()->name(),
+                  thread->name(),
                   requested_size * HeapWordSize / K,
                   min_size * HeapWordSize / K,
                   _max_tlab_size * HeapWordSize / K,
@@ -187,7 +192,11 @@ HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
   }
 
   // Take the rest of the current page if it can hold at least min_size.
-  return _global_region->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
+  HeapWord* res = _global_region->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
+  if (res != nullptr) {
+    EpoxyThreadLocalData::set_tlab_words(thread, size);
+  }
+  return res;
 }
 
 HeapWord* EpoxyHeap::mem_allocate(size_t size) {

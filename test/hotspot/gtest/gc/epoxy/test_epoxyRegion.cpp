@@ -219,3 +219,34 @@ TEST_VM_F(EpoxyRegionTest, ranged_request_gets_desired_size_when_it_fits) {
   ASSERT_NE(p, (HeapWord*)nullptr);
   EXPECT_EQ(actual, (size_t)400);
 }
+
+// A request too big for the current page's tail goes to a fresh page, but the
+// region keeps bumping whichever of the two pages has more room left.
+TEST_VM_F(EpoxyRegionTest, mid_size_request_does_not_abandon_a_roomier_page) {
+  HeapWord* a = allocate_object(1000);
+  HeapWord* b = allocate_object(RegionPageWords - 700);   // does not fit after a
+  HeapWord* c = allocate_object(1000);                    // fits after a, not after b
+  ASSERT_NE(a, (HeapWord*)nullptr);
+  ASSERT_NE(b, (HeapWord*)nullptr);
+  ASSERT_NE(c, (HeapWord*)nullptr);
+  EXPECT_NE(_allocator->page_for(b), _allocator->page_for(a));
+  EXPECT_EQ(_allocator->page_for(c), _allocator->page_for(a));
+  EXPECT_EQ(c, a + 1000);
+  EXPECT_EQ(_region->used_bytes(), 2 * RegionPageSize);
+
+  // Both pages are still walked completely.
+  RecordingClosure cl;
+  _region->object_iterate(&cl);
+  EXPECT_EQ(cl._starts.length(), 3);
+}
+
+// When the fresh page ends up with more room, the region moves to it.
+TEST_VM_F(EpoxyRegionTest, mid_size_request_moves_to_the_fresh_page_when_it_is_roomier) {
+  HeapWord* a = allocate_object(RegionPageWords - 500);
+  HeapWord* b = allocate_object(1000);                    // does not fit after a
+  HeapWord* c = allocate_object(1000);
+  ASSERT_NE(b, (HeapWord*)nullptr);
+  ASSERT_NE(c, (HeapWord*)nullptr);
+  EXPECT_NE(_allocator->page_for(b), _allocator->page_for(a));
+  EXPECT_EQ(c, b + 1000);
+}

@@ -24,6 +24,7 @@
  */
 
 #include "gc/epoxy/epoxyBarrierSet.hpp"
+#include "gc/epoxy/epoxyThreadLocalData.hpp"
 #include "gc/shared/barrierSet.hpp"
 #include "gc/shared/barrierSetAssembler.hpp"
 #include "runtime/javaThread.hpp"
@@ -43,7 +44,9 @@ EpoxyBarrierSet::EpoxyBarrierSet() : BarrierSet(
           BarrierSet::FakeRtti(BarrierSet::EpoxyBarrierSet)) {}
 
 void EpoxyBarrierSet::on_thread_create(Thread *thread) {
+  EpoxyThreadLocalData::create(thread);
 }
 
 void EpoxyBarrierSet::on_thread_destroy(Thread *thread) {
+  EpoxyThreadLocalData::destroy(thread);
 }

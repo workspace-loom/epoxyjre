@@ -88,9 +88,10 @@ HeapWord* EpoxyRegion::allocate(size_t size_in_words) {
       }
     }
 
-    // The current page cannot take this request: move to a new page. The old
-    // page keeps its top(), so it stays walkable, and a thread that still
-    // holds a pointer to it may harmlessly bump it a little further.
+    // The current page cannot take this request: serve it from a new page.
+    // Every page keeps its top(), so it stays walkable. This holds only while
+    // pages are never taken away from a region: a thread that still holds a
+    // pointer to the old page may bump it a little further.
     MutexLocker ml(&_lock, Mutex::_no_safepoint_check_flag);
     if (AtomicAccess::load(&_current) != page) {
       continue;  // another thread already moved on
@@ -100,8 +101,19 @@ HeapWord* EpoxyRegion::allocate(size_t size_in_words) {
       // Leave the current page in place: a smaller request may still fit in it.
       return nullptr;
     }
+    // The fresh page is not visible to other threads yet.
+    HeapWord* result = fresh->bottom();
+    fresh->set_top(result + size_in_words);
     append(fresh);
-    AtomicAccess::release_store(&_current, fresh);
+
+    // Keep bumping whichever page has more room; the other one's tail is left
+    // behind. Without this a run of mid-sized objects wastes half the heap.
+    size_t fresh_free = pointer_delta(fresh->end(), fresh->top());
+    size_t old_free = (page == nullptr) ? 0 : pointer_delta(page->end(), AtomicAccess::load(page->top_addr()));
+    if (page == nullptr || fresh_free > old_free) {
+      AtomicAccess::release_store(&_current, fresh);
+    }
+    return result;
   }
 }
 
