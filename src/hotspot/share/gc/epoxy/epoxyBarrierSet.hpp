@@ -44,6 +44,7 @@ public:
 
   virtual void on_thread_create(Thread* thread);
   virtual void on_thread_destroy(Thread* thread);
+  virtual void on_thread_detach(Thread* thread);
 
   // To be called before value is stored at addr. holder is the object that
   // contains addr when the caller knows it, else null. addr outside the heap

@@ -101,6 +101,7 @@ public:
 
   // Promotion. A promoted object survives the release of its scratch region.
   bool is_promoted(oop obj) const;
+  const MarkBitMap* promoted_marks() const { return &_promoted_marks; }
   // Promotes obj and every scratch object reachable from it. obj must be an
   // unpromoted scratch object of the calling thread.
   void promote(oop obj);

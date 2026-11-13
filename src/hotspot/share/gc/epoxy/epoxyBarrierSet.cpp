@@ -53,8 +53,15 @@ void EpoxyBarrierSet::on_thread_create(Thread *thread) {
 }
 
 void EpoxyBarrierSet::on_thread_destroy(Thread *thread) {
-  EpoxyHeap::heap()->exit_all_scratch(thread);
+  assert(EpoxyThreadLocalData::scratch(thread) == nullptr, "regions are given up when the thread detaches");
   EpoxyThreadLocalData::destroy(thread);
+}
+
+void EpoxyBarrierSet::on_thread_detach(Thread *thread) {
+  // Called while the thread is still on the threads list and holds
+  // Threads_lock, so this cannot overlap a safepoint operation that walks
+  // the heap. The thread's TLAB has been retired by now.
+  EpoxyHeap::heap()->exit_all_scratch(thread);
 }
 
 // True if inner is outer or a region nested inside it on the same thread.
@@ -79,24 +86,24 @@ void EpoxyBarrierSet::on_store_slow(oop value, const void* addr, oop holder) {
     return;
   }
 
-  EpoxyRegion* value_region = pages->page_for(cast_from_oop<void*>(value))->owner();
+  // The holder is in a scratch page. If it has been promoted it outlives
+  // every region, wherever it lies, and other threads may reach it. When the
+  // holder's start is unknown, assume so if anything on its page has been.
   EpoxyPage* holder_page = pages->page_for(addr);
-  EpoxyRegion* holder_region = holder_page->owner();
-
-  if (holder_region != value_region) {
-    // Fine only if the holder dies first: it is in a region nested inside the
-    // value's region.
-    if (!is_nested_in(holder_region, value_region)) {
-      heap->promote(value);
-    }
-    return;
-  }
-
-  // Same region. The holder outlives it only if it has been promoted. When
-  // the holder's start is unknown, assume so if anything on its page has been.
   bool holder_promoted = (holder != nullptr) ? heap->is_promoted(holder)
                                              : holder_page->promoted_count() > 0;
   if (holder_promoted) {
+    heap->promote(value);
+    return;
+  }
+
+  // The holder is an unpromoted scratch object too, so it is private to this
+  // thread and both regions are this thread's: their descriptors can be read.
+  // The store is fine if the holder dies no later than the value: same
+  // region, or the holder's region is nested inside the value's.
+  EpoxyRegion* value_region = pages->page_for(cast_from_oop<void*>(value))->owner();
+  EpoxyRegion* holder_region = holder_page->owner();
+  if (!is_nested_in(holder_region, value_region)) {
     heap->promote(value);
   }
 }

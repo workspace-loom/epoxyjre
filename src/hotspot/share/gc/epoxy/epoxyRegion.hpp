@@ -84,6 +84,9 @@ public:
   // and may be used again.
   void release(EpoxyPage** kept);
 
+  // First page; follow EpoxyPage::next(). Only for a region nobody is allocating in.
+  EpoxyPage* first_page() const { return _first; }
+
   size_t used_bytes() const;
   const char* name() const { return _name; }
 };

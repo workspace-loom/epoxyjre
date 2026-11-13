@@ -31,6 +31,7 @@
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
 #include "gc/epoxy/epoxyVerifier.hpp"
+#include "gc/shared/markBitMap.inline.hpp"
 #include "gc/shared/oopStorage.inline.hpp"
 #include "gc/shared/oopStorageSet.inline.hpp"
 #include "logging/log.hpp"
@@ -64,7 +65,8 @@ enum EpoxyRootKind {
 // What is wrong with the reference.
 enum EpoxyViolationKind {
   EpoxyViolationUnpromoted,  // points at an unpromoted object of the region being released
-  EpoxyViolationNotInHeap    // points at memory that is not in the heap or is in a freed page
+  EpoxyViolationNotInHeap,   // points at memory that is not in the heap or is in a freed page
+  EpoxyViolationFromPromoted // a promoted object refers to an unpromoted scratch object of any region
 };
 
 struct EpoxyViolation {
@@ -95,6 +97,8 @@ private:
   GrowableArrayCHeap<oop, mtGC>* const  _stack;
 
   size_t         _visited_count;
+
+  bool _scanning_promoted;
   int            _total;                  // violations found, including the ones not kept
   EpoxyViolation _violations[MaxViolations];
 
@@ -132,6 +136,16 @@ private:
     if (obj == nullptr) {
       return;
     }
+    if (_scanning_promoted) {
+      // A promoted object outlives every region: nothing it refers to may
+      // be an unpromoted scratch object, whichever region that is in.
+      if (!_heap->is_in(obj)) {
+        record(p, obj, EpoxyViolationNotInHeap);
+      } else if (_pages->is_scratch(cast_from_oop<void*>(obj)) && !_heap->is_promoted(obj)) {
+        record(p, obj, EpoxyViolationFromPromoted);
+      }
+      return;
+    }
     // Never dereference a reference that is not into a live part of the heap.
     if (!_heap->is_in(obj)) {
       record(p, obj, EpoxyViolationNotInHeap);
@@ -163,6 +177,7 @@ public:
       _visited(visited),
       _stack(stack),
       _visited_count(0),
+      _scanning_promoted(false),
       _total(0),
       _root_kind(EpoxyRootThread),
       _holder(nullptr),
@@ -209,6 +224,17 @@ public:
     }
   }
 
+  // Checks the fields of one promoted object of the region being released,
+  // whether or not anything still refers to it: it stays in the heap, and
+  // heap walks visit it, for as long as the VM runs.
+  void scan_promoted_object(oop obj) {
+    _scanning_promoted = true;
+    _root_kind = EpoxyRootField;
+    _holder = obj;
+    obj->oop_iterate(this);
+    _scanning_promoted = false;
+  }
+
   int total_violations() const    { return _total; }
   size_t visited_count() const    { return _visited_count; }
 
@@ -240,7 +266,9 @@ public:
           break;
       }
       tty->print(": slot " PTR_FORMAT " holds " PTR_FORMAT, p2i(v._slot), p2i(v._bad));
-      if (v._kind == EpoxyViolationUnpromoted) {
+      if (v._kind == EpoxyViolationFromPromoted) {
+        tty->print_cr(", an unpromoted object of class %s referred to by a promoted object", v._bad->klass()->external_name());
+      } else if (v._kind == EpoxyViolationUnpromoted) {
         // The page is not freed yet, so the object can be read.
         tty->print_cr(", an unpromoted object of class %s", v._bad->klass()->external_name());
       } else {
@@ -342,6 +370,21 @@ public:
 
     // Everything reachable from the roots.
     cl.drain();
+
+    // Every promoted object on the region's pages, reachable or not.
+    const MarkBitMap* marks = heap->promoted_marks();
+    for (EpoxyPage* page = _region->first_page(); page != nullptr; page = page->next()) {
+      if (page->promoted_count() == 0) {
+        continue;
+      }
+      HeapWord* top = page->top();
+      HeapWord* addr = marks->get_next_marked_addr(page->bottom(), top);
+      while (addr < top) {
+        oop obj = cast_to_oop(addr);
+        cl.scan_promoted_object(obj);
+        addr = marks->get_next_marked_addr(addr + obj->size(), top);
+      }
+    }
 
     if (cl.total_violations() > 0) {
       cl.print_violations(_thread);

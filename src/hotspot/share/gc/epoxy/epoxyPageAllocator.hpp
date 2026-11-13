@@ -26,6 +26,8 @@
 #include "runtime/mutex.hpp"
 #include "utilities/bitMap.hpp"
 
+class MarkBitMap;
+
 // Hands out and takes back fixed-size pages of a reserved address range.
 //
 // Memory is committed the first time a page is handed out and stays
@@ -40,6 +42,7 @@ private:
 
   EpoxyPage*      _pages;       // one entry per page, indexed by page number
   uint8_t*        _kind;        // one byte per page: 1 if the page belongs to a scratch region
+  MarkBitMap*     _marks;       // promotion marks, cleared for a run when it is freed; may be null
   CHeapBitMap     _free;        // bit set: the page is free
   CHeapBitMap     _committed;   // bit set: the page's memory is committed
   size_t          _used_pages;
@@ -76,6 +79,7 @@ public:
     return _reserved.contains(addr) && _kind[pointer_delta(addr, _reserved.start(), 1) >> _page_shift] != 0;
   }
   void set_scratch(EpoxyPage* first, bool scratch);
+  void set_marks(MarkBitMap* marks) { _marks = marks; }
   const uint8_t* kind_table() const { return _kind; }
   int page_shift() const           { return _page_shift; }
 

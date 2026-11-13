@@ -164,6 +164,46 @@ public class TestScratchNested {
     promotedGraph(deepStatic, w);
   }
 
+  // ---- 5. depth 2: an outer object stored into an inner object that has already escaped -------
+  static Holder sink;
+  static Holder droppedSink;
+
+  static void outerIntoEscapedInner() {
+    Holder v = new Holder();                            // allocated in the outer region
+    v.node = new Node(11, 9);
+    v.graph = buildGraph(10);
+    enter();
+    outerIntoEscapedInnerBody(v);
+    exit();
+    churn();
+    verifyNode(sink.outer.node, 11, 9, "outer object in an escaped inner object");
+    promoted(sink.outer, "outer object in an escaped inner object");
+  }
+
+  static void outerIntoEscapedInnerBody(Holder v) {
+    Holder h = new Holder();                            // allocated in the inner region
+    sink = h;                                           // h escapes: it now outlives both regions
+    h.outer = v;                                        // so v must be promoted too
+  }
+
+  // The same, but the static is cleared before the outer exit: nothing reachable
+  // refers to the outer object any more, yet the promoted inner object still holds it.
+  static void outerIntoEscapedInnerThenDropped() {
+    Holder v = new Holder();
+    v.node = new Node(12, 9);
+    enter();
+    outerIntoDroppedBody(v);
+    exit();
+    droppedSink = null;
+    churn();
+  }
+
+  static void outerIntoDroppedBody(Holder v) {
+    Holder h = new Holder();
+    droppedSink = h;
+    h.outer = v;
+  }
+
   static void run(String name, Runnable body) {
     depth(0, name);
     enter();
@@ -185,6 +225,12 @@ public class TestScratchNested {
     run("inner object in a static", TestScratchNested::innerIntoStatic);
     verifyGraph(staticGraph, 5, "depth 2 static after both exits");
     promotedGraph(staticGraph, "depth 2 static after both exits");
+
+    run("outer object in an escaped inner object", TestScratchNested::outerIntoEscapedInner);
+    verifyNode(sink.outer.node, 11, 9, "outer object in an escaped inner object, after both exits");
+    verifyGraph(sink.outer.graph, 10, "outer object in an escaped inner object, after both exits");
+    run("outer object in an escaped inner object that is then dropped",
+        TestScratchNested::outerIntoEscapedInnerThenDropped);
 
     run("depth 3", TestScratchNested::level1);
     verifyGraph(deepStatic, 9, "depth 3 static after all exits");

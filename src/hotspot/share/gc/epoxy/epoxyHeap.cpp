@@ -45,7 +45,7 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
-#include "runtime/javaThread.hpp"
+#include "runtime/javaThread.inline.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/threads.hpp"
 #include "services/memoryUsage.hpp"
@@ -78,6 +78,7 @@ jint EpoxyHeap::initialize() {
   }
   os::commit_memory_or_exit(marks_base, marks_bytes, false /* executable */, "Epoxy promotion marks");
   _promoted_marks.initialize(pages_region, MemRegion((HeapWord*)marks_base, marks_bytes / HeapWordSize));
+  _page_allocator->set_marks(&_promoted_marks);
 
   // Precompute hot fields. A TLAB never spans pages.
   _max_tlab_size = MIN2(CollectedHeap::max_tlab_size(), align_object_size(_page_size_bytes / HeapWordSize));
@@ -171,6 +172,12 @@ uint EpoxyHeap::scratch_depth(Thread* thread) {
 bool EpoxyHeap::enter_scratch(JavaThread* thread) {
   assert(thread == JavaThread::current(), "a thread enters its own regions");
   if (!Arguments::is_interpreter_only()) {
+    return false;
+  }
+  // Regions belong to platform threads. A virtual thread can move between
+  // carriers, and freezing it copies its frames into a heap object without
+  // going through the store barrier.
+  if (thread->is_vthread_mounted()) {
     return false;
   }
   // Allocation after this point must come from the new region.

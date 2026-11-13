@@ -18,6 +18,7 @@
  */
 
 #include "gc/epoxy/epoxyPageAllocator.hpp"
+#include "gc/shared/markBitMap.inline.hpp"
 #include "memory/allocation.inline.hpp"
 #include "runtime/atomicAccess.hpp"
 #include "runtime/globals.hpp"
@@ -35,6 +36,7 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
     _max_pages(reserved.byte_size() >> log2i_exact(page_size_bytes)),
     _pages(nullptr),
     _kind(nullptr),
+    _marks(nullptr),
     _free(reserved.byte_size() >> log2i_exact(page_size_bytes), mtGC),
     _committed(reserved.byte_size() >> log2i_exact(page_size_bytes), mtGC),
     _used_pages(0),
@@ -146,6 +148,12 @@ void EpoxyPageAllocator::free(EpoxyPage* first) {
   for (size_t i = start; i < start + num_pages; i++) {
     AtomicAccess::store(&_pages[i]._run_start, (uint)i);
     _kind[i] = 0;
+  }
+  // The memory's next user must not inherit promotion marks. A freed run
+  // normally has none (it is freed because nothing in it was promoted);
+  // clearing costs little and makes that certain.
+  if (_marks != nullptr) {
+    _marks->clear_range(MemRegion(first->_bottom, first->_end));
   }
 #ifdef ASSERT
   // Make any use of a stale reference into this memory fail fast.
