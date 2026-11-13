@@ -32,13 +32,18 @@ On failure the console log is kept and its path is printed.
 
 ## Which expectation applies
 
-Until scratch regions exist, the Epoxy heap allocates from pages and never
-frees, so the only correct outcome is `oom`. Once regions reclaim per-tick
-garbage the expectation becomes `alive`.
+With no scope file the heap frees nothing and the only correct outcome is
+`oom`. With `-XX:EpoxyScopeFile=test/epoxy/minecraft/server-scopes.txt` the
+per-tick and per-task garbage is reclaimed and the expectation is `alive`.
 
-Running with another heap (for example `--vm-flag=-XX:+UseEpsilonGC`) always
-fails with `VM did not log "Using Epoxy"`. That is the check that the script
-is really testing this heap.
+For a quick `alive` check add `--sprint-ticks N`: after `--settle` seconds the
+script runs N ticks as fast as the server can (`tick sprint`) and passes when
+the server reports the sprint done. 6000 ticks are five minutes of game time
+and take about ten seconds. `--keep-log` keeps the console log on a pass;
+with `--vm-flag=-Xlog:gc+region=info` it holds the region statistics.
+
+Objects that are stored into long-lived objects are kept and never freed, so
+memory still grows with every tick; see the results below.
 
 ## Reference results
 
@@ -52,6 +57,23 @@ Both heaps free nothing, so the times should be close.
 | release | Epoxy, before the TLAB and page-tail fixes | pass (`oom`) | 12 s |
 | release | Epoxy, final | pass (`oom`) | 14 s |
 | release | Epsilon | rejected, as intended | 14 s |
+
+### With scratch regions (release build, 2026-11-13)
+
+256 chunks force-loaded, `server-scopes.txt`, then a sprint. "No regions" is
+the table above.
+
+| Change | Heap | Result |
+|---|---|---|
+| No regions | 4 GB | out of memory after 14 s |
+| Tick and worker-task regions, 256-byte lines | 4 GB | out of memory after 31 s |
+| 64-byte lines, holes reused by size, regions for start-up, serial executors and packets | 4 GB | 6000 ticks done; out of memory soon after |
+| Holes of 128 bytes and more reused | 4 GB | 24000 ticks done (20 minutes of game time), 3.4 GB in use at the end |
+| Same | 10 GB | 72000 ticks done (one hour of game time), heap use 2.1 GB before and 5.0 GB after |
+
+Tick time in the sprints was 1.4 to 2.0 ms. The remaining growth, about
+40 KB per tick, is data that was stored into long-lived objects and later
+dropped by the game; `-XX:+EpoxyProfile` lists it by class.
 
 ## HotSpot tier-1 runtime tests on Epoxy
 

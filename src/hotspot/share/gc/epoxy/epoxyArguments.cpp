@@ -52,7 +52,7 @@ void EpoxyArguments::initialize() {
   // as small as a few lines: the default minimum TLAB would make most of them
   // unusable.
   if (FLAG_IS_DEFAULT(MinTLABSize)) {
-    FLAG_SET_DEFAULT(MinTLABSize, 512);
+    FLAG_SET_DEFAULT(MinTLABSize, 128);
   }
 
 #ifdef COMPILER2
