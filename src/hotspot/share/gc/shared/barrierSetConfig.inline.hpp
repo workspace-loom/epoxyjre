@@ -30,7 +30,7 @@
 #include "gc/shared/cardTableBarrierSet.inline.hpp"
 
 #if INCLUDE_EPOXY
-#include "gc/epoxy/epoxyBarrierSet.hpp"
+#include "gc/epoxy/epoxyBarrierSet.inline.hpp"
 #endif
 #if INCLUDE_EPSILONGC
 #include "gc/epsilon/epsilonBarrierSet.hpp"

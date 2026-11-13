@@ -29,6 +29,7 @@
 #include "gc/epoxy/epoxyBarrierSet.hpp"
 #include "gc/epoxy/epoxyMonitoringSupport.hpp"
 #include "gc/shared/collectedHeap.hpp"
+#include "gc/shared/markBitMap.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/mutex.hpp"
 #include "services/memoryManager.hpp"
@@ -46,6 +47,7 @@ private:
   EpoxyPageAllocator* _page_allocator;
   EpoxyRegion* _global_region;
   EpoxyPage* _adopted_pages;     // pages kept from released scratch regions
+  MarkBitMap _promoted_marks;    // one bit per object start: set when the object is promoted
   Mutex _adopted_lock;
   size_t _page_size_bytes;
   size_t _max_tlab_size;
@@ -96,6 +98,14 @@ public:
   void exit_scratch(JavaThread* thread);
   void exit_all_scratch(Thread* thread);
   static uint scratch_depth(Thread* thread);
+
+  // Promotion. A promoted object survives the release of its scratch region.
+  bool is_promoted(oop obj) const;
+  // Promotes obj and every scratch object reachable from it. obj must be an
+  // unpromoted scratch object of the calling thread.
+  void promote(oop obj);
+  // Marks one object; false if it was promoted already.
+  bool mark_promoted(oop obj);
 
   // The region the calling thread allocates in.
   EpoxyRegion* allocation_region() const;

@@ -34,6 +34,7 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
     _page_shift(log2i_exact(page_size_bytes)),
     _max_pages(reserved.byte_size() >> log2i_exact(page_size_bytes)),
     _pages(nullptr),
+    _kind(nullptr),
     _free(reserved.byte_size() >> log2i_exact(page_size_bytes), mtGC),
     _committed(reserved.byte_size() >> log2i_exact(page_size_bytes), mtGC),
     _used_pages(0),

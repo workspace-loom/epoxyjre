@@ -23,7 +23,11 @@
  *
  */
 
-#include "gc/epoxy/epoxyBarrierSet.hpp"
+#include "gc/epoxy/epoxyBarrierSet.inline.hpp"
+#include "gc/epoxy/epoxyBarrierSetAssembler.hpp"
+#include "gc/epoxy/epoxyPage.hpp"
+#include "gc/epoxy/epoxyRegion.hpp"
+#include "runtime/interfaceSupport.inline.hpp"
 #include "gc/epoxy/epoxyHeap.hpp"
 #include "gc/epoxy/epoxyThreadLocalData.hpp"
 #include "gc/shared/barrierSet.hpp"
@@ -37,7 +41,7 @@
 #endif
 
 EpoxyBarrierSet::EpoxyBarrierSet() : BarrierSet(
-          make_barrier_set_assembler<BarrierSetAssembler>(),
+          make_barrier_set_assembler<EpoxyBarrierSetAssembler>(),
           make_barrier_set_c1<BarrierSetC1>(),
           make_barrier_set_c2<BarrierSetC2>(),
           nullptr /* barrier_set_nmethod */,
@@ -52,3 +56,51 @@ void EpoxyBarrierSet::on_thread_destroy(Thread *thread) {
   EpoxyHeap::heap()->exit_all_scratch(thread);
   EpoxyThreadLocalData::destroy(thread);
 }
+
+// True if inner is outer or a region nested inside it on the same thread.
+static bool is_nested_in(EpoxyRegion* inner, EpoxyRegion* outer) {
+  for (EpoxyRegion* r = inner; r != nullptr; r = r->parent()) {
+    if (r == outer) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void EpoxyBarrierSet::on_store_slow(oop value, const void* addr, oop holder) {
+  // value is an unpromoted scratch object: it belongs to a region of the
+  // calling thread, and only this thread can see it.
+  EpoxyHeap* heap = EpoxyHeap::heap();
+  EpoxyPageAllocator* pages = heap->page_allocator();
+
+  if (!pages->is_scratch(addr)) {
+    // A native root, or an object that is not in any scratch region.
+    heap->promote(value);
+    return;
+  }
+
+  EpoxyRegion* value_region = pages->page_for(cast_from_oop<void*>(value))->owner();
+  EpoxyPage* holder_page = pages->page_for(addr);
+  EpoxyRegion* holder_region = holder_page->owner();
+
+  if (holder_region != value_region) {
+    // Fine only if the holder dies first: it is in a region nested inside the
+    // value's region.
+    if (!is_nested_in(holder_region, value_region)) {
+      heap->promote(value);
+    }
+    return;
+  }
+
+  // Same region. The holder outlives it only if it has been promoted. When
+  // the holder's start is unknown, assume so if anything on its page has been.
+  bool holder_promoted = (holder != nullptr) ? heap->is_promoted(holder)
+                                             : holder_page->promoted_count() > 0;
+  if (holder_promoted) {
+    heap->promote(value);
+  }
+}
+
+JRT_LEAF(void, EpoxyBarrierSet::store_barrier_entry(oopDesc* value, oopDesc* holder))
+  EpoxyBarrierSet::on_store(cast_to_oop(value), holder, cast_to_oop(holder));
+JRT_END

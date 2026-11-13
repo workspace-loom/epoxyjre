@@ -428,7 +428,11 @@ WB_ENTRY(jint, WB_EpoxyScratchDepth(JNIEnv* env, jobject o))
 WB_END
 
 WB_ENTRY(jboolean, WB_EpoxyIsPromoted(JNIEnv* env, jobject o, jobject obj))
-  return false;
+  if (!UseEpoxy || obj == nullptr) {
+    return false;
+  }
+  oop p = JNIHandles::resolve(obj);
+  return EpoxyHeap::heap()->is_in(p) && EpoxyHeap::heap()->is_promoted(p);
 WB_END
 #endif // INCLUDE_EPOXY
 

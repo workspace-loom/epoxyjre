@@ -25,17 +25,24 @@
 
 #include "gc/epoxy/epoxyHeap.hpp"
 #include "gc/epoxy/epoxyInitLogger.hpp"
+#include "gc/shared/markBitMap.inline.hpp"
+#include "utilities/growableArray.hpp"
 #include "gc/epoxy/epoxyMemoryPool.hpp"
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
 #include "gc/epoxy/epoxyThreadLocalData.hpp"
+#include "gc/epoxy/epoxyVerifier.hpp"
 #include "gc/shared/gcArguments.hpp"
 #include "gc/shared/locationPrinter.inline.hpp"
 #include "logging/log.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/metaspaceUtils.hpp"
 #include "memory/resourceArea.hpp"
+#include "memory/iterator.inline.hpp"
 #include "memory/universe.hpp"
+#include "oops/access.inline.hpp"
+#include "oops/compressedOops.inline.hpp"
+#include "oops/oop.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/javaThread.hpp"
@@ -62,6 +69,16 @@ jint EpoxyHeap::initialize() {
   _page_allocator = new EpoxyPageAllocator(pages_region, _page_size_bytes, heap_rs.special());
   _global_region = new EpoxyRegion(_page_allocator, "global");
 
+  // Promotion marks: one bit per possible object start. The storage is
+  // reserved in full and backed by the OS only where bits are set.
+  size_t marks_bytes = align_up(MarkBitMap::compute_size(max_byte_size), os::vm_allocation_granularity());
+  char* marks_base = os::reserve_memory(marks_bytes, mtGC);
+  if (marks_base == nullptr) {
+    vm_exit_during_initialization("Could not reserve memory for the Epoxy promotion marks");
+  }
+  os::commit_memory_or_exit(marks_base, marks_bytes, false /* executable */, "Epoxy promotion marks");
+  _promoted_marks.initialize(pages_region, MemRegion((HeapWord*)marks_base, marks_bytes / HeapWordSize));
+
   // Precompute hot fields. A TLAB never spans pages.
   _max_tlab_size = MIN2(CollectedHeap::max_tlab_size(), align_object_size(_page_size_bytes / HeapWordSize));
   _step_counter_update = MIN2<size_t>(max_byte_size / 16, EpoxyUpdateCountersStep);
@@ -85,6 +102,60 @@ size_t EpoxyHeap::capacity() const {
 
 size_t EpoxyHeap::used() const {
   return _page_allocator->used_pages() * _page_size_bytes;
+}
+
+bool EpoxyHeap::is_promoted(oop obj) const {
+  return _promoted_marks.is_marked(obj);
+}
+
+bool EpoxyHeap::mark_promoted(oop obj) {
+  if (!_promoted_marks.par_mark(obj)) {
+    return false;
+  }
+  _page_allocator->page_for(cast_from_oop<void*>(obj))->note_promoted();
+  return true;
+}
+
+// Marks every unpromoted scratch object referred to by the object it is applied to.
+class EpoxyPromoteClosure : public BasicOopIterateClosure {
+  EpoxyHeap* const _heap;
+  EpoxyPageAllocator* const _pages;
+  GrowableArrayCHeap<oop, mtGC>* const _stack;
+
+  template <typename T>
+  void do_oop_work(T* p) {
+    T element = RawAccess<>::oop_load(p);
+    if (CompressedOops::is_null(element)) {
+      return;
+    }
+    oop obj = CompressedOops::decode_not_null(element);
+    if (_pages->is_scratch(cast_from_oop<void*>(obj)) && _heap->mark_promoted(obj)) {
+      _stack->push(obj);
+    }
+  }
+
+public:
+  EpoxyPromoteClosure(EpoxyHeap* heap, GrowableArrayCHeap<oop, mtGC>* stack) :
+      _heap(heap), _pages(heap->page_allocator()), _stack(stack) {}
+
+  void do_oop(oop* p) override       { do_oop_work(p); }
+  void do_oop(narrowOop* p) override { do_oop_work(p); }
+  // A Reference's referent and discovered fields are ordinary fields here.
+  ReferenceIterationMode reference_iteration_mode() override { return DO_FIELDS; }
+};
+
+void EpoxyHeap::promote(oop obj) {
+  assert(_page_allocator->is_scratch(cast_from_oop<void*>(obj)), "only scratch objects are promoted");
+  if (!mark_promoted(obj)) {
+    return;
+  }
+  GrowableArrayCHeap<oop, mtGC> stack(32);
+  EpoxyPromoteClosure closure(this, &stack);
+  stack.push(obj);
+  while (!stack.is_empty()) {
+    oop next = stack.pop();
+    next->oop_iterate(&closure);
+  }
 }
 
 EpoxyRegion* EpoxyHeap::allocation_region() const {
@@ -117,6 +188,12 @@ void EpoxyHeap::exit_scratch(JavaThread* thread) {
   assert(thread == JavaThread::current(), "a thread leaves its own regions");
   EpoxyRegion* region = EpoxyThreadLocalData::scratch(thread);
   assert(region != nullptr, "not in a scratch region");
+
+#ifdef ASSERT
+  if (EpoxyVerifyScratchExit) {
+    EpoxyVerifier::verify_release(thread, region);
+  }
+#endif
 
   // The TLAB lies in a page that is about to go.
   if (UseTLAB) {
@@ -330,6 +407,18 @@ void EpoxyHeap::object_iterate(ObjectClosure *cl) {
   _global_region->object_iterate(cl);
   EpoxyScratchIterateClosure scratch(cl);
   Threads::java_threads_do(&scratch);
+
+  // Pages kept from released regions hold dead objects next to the promoted
+  // ones. Only the promoted ones are visited.
+  for (EpoxyPage* page = _adopted_pages; page != nullptr; page = page->next()) {
+    HeapWord* top = page->top();
+    HeapWord* addr = _promoted_marks.get_next_marked_addr(page->bottom(), top);
+    while (addr < top) {
+      oop obj = cast_to_oop(addr);
+      cl->do_object(obj);
+      addr = _promoted_marks.get_next_marked_addr(addr + obj->size(), top);
+    }
+  }
 }
 
 void EpoxyHeap::print_heap_on(outputStream *st) const {

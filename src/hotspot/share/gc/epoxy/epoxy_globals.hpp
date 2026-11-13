@@ -44,6 +44,16 @@
           "between 64K and 1M.")                                            \
           range(64 * K, 1 * M)                                              \
                                                                             \
+  develop(bool, EpoxyStoreBarrier, true,                                    \
+          "Promote objects that escape a scratch region. Turning this "     \
+          "off makes the VM unsafe; it exists so that tests can show the "  \
+          "verifier catching a missing promotion.")                         \
+                                                                            \
+  develop(bool, EpoxyVerifyScratchExit, false,                              \
+          "When a scratch region is released, walk the heap from the "      \
+          "roots and fail if anything reachable is about to be freed. "     \
+          "Test tooling; not present in product builds.")                   \
+                                                                            \
   product(size_t, EpoxyPrintHeapSteps, 20,                                  \
           "Print heap occupancy stats with this number of steps. "          \
           "0 turns the printing off.")                                      \
