@@ -45,7 +45,9 @@
 #include "memory/universe.hpp"
 #include "oops/access.inline.hpp"
 #include "oops/compressedOops.inline.hpp"
+#include "oops/klass.hpp"
 #include "oops/oop.inline.hpp"
+#include "oops/symbol.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
@@ -320,6 +322,13 @@ bool EpoxyHeap::enter_scratch(JavaThread* thread) {
   // carriers, and freezing it copies its frames into a heap object without
   // going through the store barrier.
   if (thread->is_vthread_mounted()) {
+    return false;
+  }
+  // Nor may a carrier thread open one: the scheduler's tasks would mount
+  // virtual threads inside it, and those would then allocate in the carrier's
+  // region and keep what they allocated after it is released.
+  oop thread_obj = thread->threadObj();
+  if (thread_obj != nullptr && thread_obj->klass()->name()->equals("jdk/internal/misc/CarrierThread")) {
     return false;
   }
   // Allocation after this point must come from the new region.

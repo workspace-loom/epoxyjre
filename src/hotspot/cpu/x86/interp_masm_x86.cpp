@@ -1619,35 +1619,6 @@ void InterpreterMacroAssembler::notify_method_exit(
   Register rthread = r15_thread;
   Register rarg = c_rarg1;
 
-#if INCLUDE_EPOXY
-  // A method listed in the scope file releases its scratch region, on a
-  // normal return and when it is left by an exception. The value being
-  // returned is kept across the call on the expression stack, and handed to
-  // the runtime when it is a reference so that it can be promoted.
-  if (UseEpoxy && EpoxyScopes::has_scopes()) {
-    Label L;
-    get_method(rarg);
-    testl(Address(rarg, Method::flags_status_offset()), MethodFlags::epoxy_scope_bit());
-    jcc(Assembler::zero, L);
-    Label no_reference;
-    if (state == atos) {
-      // The returned object may be moved out of the region: the runtime
-      // hands back its address, which replaces rax. Returning null is
-      // handled like returning nothing.
-      testptr(rax, rax);
-      jcc(Assembler::zero, no_reference);
-      movptr(rarg, rax);
-      call_VM(rax, CAST_FROM_FN_PTR(address, InterpreterRuntime::epoxy_scope_exit), rarg);
-      jmp(L);
-    }
-    bind(no_reference);
-    push(state);
-    xorptr(rarg, rarg);
-    call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::epoxy_scope_exit), rarg);
-    pop(state);
-    bind(L);
-  }
-#endif
   if (mode == NotifyJVMTI && (JvmtiExport::can_post_interpreter_events() || JvmtiExport::can_post_frame_pop())) {
     Label L;
     // Note: frame::interpreter_frame_result has a dependency on how the
@@ -1682,6 +1653,37 @@ void InterpreterMacroAssembler::notify_method_exit(
                  rthread, rarg);
     pop(state);
   }
+
+#if INCLUDE_EPOXY
+  // Last, after the debugger and tracing hooks, which may still look at the
+  // frame's locals: a method listed in the scope file releases its scratch region, on a
+  // normal return and when it is left by an exception. The value being
+  // returned is kept across the call on the expression stack, and handed to
+  // the runtime when it is a reference so that it can be promoted.
+  if (UseEpoxy && EpoxyScopes::has_scopes()) {
+    Label L;
+    get_method(rarg);
+    testl(Address(rarg, Method::flags_status_offset()), MethodFlags::epoxy_scope_bit());
+    jcc(Assembler::zero, L);
+    Label no_reference;
+    if (state == atos) {
+      // The returned object may be moved out of the region: the runtime
+      // hands back its address, which replaces rax. Returning null is
+      // handled like returning nothing.
+      testptr(rax, rax);
+      jcc(Assembler::zero, no_reference);
+      movptr(rarg, rax);
+      call_VM(rax, CAST_FROM_FN_PTR(address, InterpreterRuntime::epoxy_scope_exit), rarg);
+      jmp(L);
+    }
+    bind(no_reference);
+    push(state);
+    xorptr(rarg, rarg);
+    call_VM(noreg, CAST_FROM_FN_PTR(address, InterpreterRuntime::epoxy_scope_exit), rarg);
+    pop(state);
+    bind(L);
+  }
+#endif
 }
 
 void InterpreterMacroAssembler::load_resolved_indy_entry(Register cache, Register index) {
