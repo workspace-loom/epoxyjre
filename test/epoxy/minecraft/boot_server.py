@@ -58,6 +58,11 @@ def main():
     ap.add_argument("--vm-flag", action="append", default=[], help="extra VM flag; repeatable")
     ap.add_argument("--expect", choices=["oom", "alive"], required=True)
     ap.add_argument("--seconds", type=int, default=120, help="for --expect alive: how long it must survive")
+    ap.add_argument("--sprint-ticks", type=int, default=0,
+                    help="for --expect alive: after --settle seconds run this many ticks as fast as the "
+                         "server can (tick sprint) and pass as soon as they are done; --seconds is then "
+                         "the time limit")
+    ap.add_argument("--settle", type=int, default=20, help="seconds between the chunk load and the sprint")
     ap.add_argument("--boot-timeout", type=int, default=600)
     ap.add_argument("--oom-timeout", type=int, default=900, help="for --expect oom: give up after this long")
     args = ap.parse_args()
@@ -80,7 +85,7 @@ def main():
     proc = subprocess.Popen(cmd, cwd=workdir, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
 
-    state = {"epoxy": False, "oom": False, "used_mb": 0.0}
+    state = {"epoxy": False, "oom": False, "used_mb": 0.0, "sprint": None}
     booted = threading.Event()
     log_path = os.path.join(workdir, "console.log")
 
@@ -94,6 +99,8 @@ def main():
                     state["oom"] = True
                 if "Done (" in line:
                     booted.set()
+                if "Sprint completed" in line:
+                    state["sprint"] = line.strip()
                 m = HEAP_LINE.search(line)
                 if m:
                     state["used_mb"] = float(m.group(1)) * UNIT_MB[m.group(2)]
@@ -133,7 +140,16 @@ def main():
     proc.stdin.flush()
 
     deadline = time.time() + (args.seconds if args.expect == "alive" else args.oom_timeout)
+    sprinting = args.expect == "alive" and args.sprint_ticks > 0
+    sprint_at = time.time() + args.settle if sprinting else None
     while time.time() < deadline and proc.poll() is None:
+        if sprint_at is not None and time.time() >= sprint_at:
+            state["used_before_sprint_mb"] = state["used_mb"]
+            proc.stdin.write(f"tick sprint {args.sprint_ticks}\n")
+            proc.stdin.flush()
+            sprint_at = None
+        if sprinting and state["sprint"]:
+            break
         time.sleep(0.5)
     exited = proc.poll() is not None
     if exited:
@@ -149,6 +165,12 @@ def main():
         return finish(False, f"heap was not exhausted within {args.oom_timeout} s")
     if exited:
         return finish(False, f"server exited before {args.seconds} s had passed")
+    if sprinting:
+        if not state["sprint"]:
+            return finish(False, f"sprint of {args.sprint_ticks} ticks did not complete within {args.seconds} s")
+        print(state["sprint"])
+        print(f"heap use before sprint {state.get('used_before_sprint_mb', 0):.0f} MB")
+        return finish(True, f"server booted on Epoxy and survived a sprint of {args.sprint_ticks} ticks")
     return finish(True, f"server booted on Epoxy and was still running after {args.seconds} s")
 
 
