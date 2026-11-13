@@ -161,8 +161,42 @@ void EpoxyHeap::promote(oop obj) {
 }
 
 EpoxyRegion* EpoxyHeap::allocation_region() const {
-  EpoxyRegion* scratch = EpoxyThreadLocalData::scratch(Thread::current());
-  return scratch != nullptr ? scratch : _global_region;
+  Thread* thread = Thread::current();
+  EpoxyRegion* scratch = EpoxyThreadLocalData::scratch(thread);
+  if (scratch == nullptr || EpoxyThreadLocalData::allocate_global(thread)) {
+    return _global_region;
+  }
+  return scratch;
+}
+
+EpoxyGlobalAllocationScope::EpoxyGlobalAllocationScope() : _thread(nullptr), _active(false) {
+  if (!UseEpoxy) {
+    return;
+  }
+  _thread = JavaThread::current();
+  if (EpoxyThreadLocalData::scratch(_thread) == nullptr || EpoxyThreadLocalData::allocate_global(_thread)) {
+    return;  // already allocating globally
+  }
+  // The thread's TLAB lies in the scratch region: give it up so that the
+  // next allocation asks the heap, which now answers with the global space.
+  if (UseTLAB) {
+    _thread->tlab().retire();
+  }
+  EpoxyThreadLocalData::set_tlab_words(_thread, 0);
+  EpoxyThreadLocalData::set_allocate_global(_thread, true);
+  _active = true;
+}
+
+EpoxyGlobalAllocationScope::~EpoxyGlobalAllocationScope() {
+  if (!_active) {
+    return;
+  }
+  // And back: the TLAB taken meanwhile lies in the global space.
+  if (UseTLAB) {
+    _thread->tlab().retire();
+  }
+  EpoxyThreadLocalData::set_tlab_words(_thread, 0);
+  EpoxyThreadLocalData::set_allocate_global(_thread, false);
 }
 
 uint EpoxyHeap::scratch_depth(Thread* thread) {
@@ -172,11 +206,13 @@ uint EpoxyHeap::scratch_depth(Thread* thread) {
 
 bool EpoxyHeap::enter_scratch(JavaThread* thread) {
   assert(thread == JavaThread::current(), "a thread enters its own regions");
-  // Only code with the store barrier may run while a region is open: the
-  // interpreter and C1 have it, C2 and JVMCI compilers do not yet.
-  if (!CompilerConfig::is_interpreter_only() && !CompilerConfig::is_c1_only()) {
+  // Only code with the store barrier may run while a region is open. The
+  // interpreter, C1 and C2 have it; a JVMCI compiler does not.
+#if INCLUDE_JVMCI
+  if (UseJVMCICompiler) {
     return false;
   }
+#endif
   // Regions belong to platform threads. A virtual thread can move between
   // carriers, and freezing it copies its frames into a heap object without
   // going through the store barrier.

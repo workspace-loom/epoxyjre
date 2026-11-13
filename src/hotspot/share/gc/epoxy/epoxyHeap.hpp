@@ -29,6 +29,7 @@
 #include "gc/epoxy/epoxyBarrierSet.hpp"
 #include "gc/epoxy/epoxyMonitoringSupport.hpp"
 #include "gc/shared/collectedHeap.hpp"
+#include "memory/allocation.hpp"
 #include "gc/shared/markBitMap.hpp"
 #include "runtime/atomic.hpp"
 #include "runtime/mutex.hpp"
@@ -182,6 +183,25 @@ private:
   void print_heap_info(size_t used) const;
   void print_metaspace_info() const;
 
+};
+
+// While one of these is live, the current thread allocates in the global
+// space even if it is inside a scratch region.
+//
+// Needed where the VM creates an object whose real allocation point lies in
+// the past. The case that matters: C2 can remove an allocation altogether
+// (scalar replacement), and when the compiled code is later deoptimized the
+// VM builds the object then. By that time the thread may have entered a
+// region younger than the one the object logically belongs to; the object
+// would be freed with the inner region while outer code still uses it. Its
+// true region is not known at that point, so it goes where it can never be
+// freed too early.
+class EpoxyGlobalAllocationScope : public StackObj {
+  JavaThread* _thread;
+  bool        _active;
+public:
+  EpoxyGlobalAllocationScope();
+  ~EpoxyGlobalAllocationScope();
 };
 
 #endif // SHARE_GC_EPOXY_EPOXYHEAP_HPP

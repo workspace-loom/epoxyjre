@@ -34,6 +34,9 @@
 #include "compiler/compilationPolicy.hpp"
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "gc/shared/collectedHeap.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyHeap.hpp"
+#endif
 #include "gc/shared/memAllocator.hpp"
 #include "interpreter/bytecode.inline.hpp"
 #include "interpreter/bytecodeStream.hpp"
@@ -1046,6 +1049,11 @@ Deoptimization::DeoptAction Deoptimization::_unloaded_action
 
 #ifdef COMPILER2
 bool Deoptimization::realloc_objects(JavaThread* thread, frame* fr, RegisterMap* reg_map, GrowableArray<ScopeValue*>* objects, TRAPS) {
+#if INCLUDE_EPOXY
+  // Objects that compiled code never allocated are created here, possibly
+  // inside a younger scratch region than the one they belong to.
+  EpoxyGlobalAllocationScope epoxy_global;
+#endif
   Handle pending_exception(THREAD, thread->pending_exception());
   const char* exception_file = thread->exception_file();
   int exception_line = thread->exception_line();

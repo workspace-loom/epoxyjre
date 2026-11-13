@@ -38,13 +38,14 @@
 #include "gc/shared/c1/barrierSetC1.hpp"
 #endif
 #ifdef COMPILER2
+#include "gc/epoxy/c2/epoxyBarrierSetC2.hpp"
 #include "gc/shared/c2/barrierSetC2.hpp"
 #endif
 
 EpoxyBarrierSet::EpoxyBarrierSet() : BarrierSet(
           make_barrier_set_assembler<EpoxyBarrierSetAssembler>(),
           make_barrier_set_c1<EpoxyBarrierSetC1>(),
-          make_barrier_set_c2<BarrierSetC2>(),
+          make_barrier_set_c2<EpoxyBarrierSetC2>(),
           nullptr /* barrier_set_nmethod */,
           nullptr /* barrier_set_stack_chunk */,
           BarrierSet::FakeRtti(BarrierSet::EpoxyBarrierSet)) {}

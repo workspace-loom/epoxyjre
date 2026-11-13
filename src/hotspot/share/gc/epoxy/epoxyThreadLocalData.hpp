@@ -43,7 +43,11 @@ private:
   // through EpoxyRegion::parent().
   EpoxyRegion* _scratch;
 
-  EpoxyThreadLocalData() : _tlab_words(0), _scratch(nullptr) {}
+  // Set while the thread must allocate in the global space even though it
+  // is inside a scratch region (see EpoxyGlobalAllocationScope).
+  bool _allocate_global;
+
+  EpoxyThreadLocalData() : _tlab_words(0), _scratch(nullptr), _allocate_global(false) {}
 
   static EpoxyThreadLocalData* data(Thread* thread) {
     assert(UseEpoxy, "Sanity");
@@ -64,6 +68,9 @@ public:
 
   static EpoxyRegion* scratch(Thread* thread)                  { return data(thread)->_scratch; }
   static void set_scratch(Thread* thread, EpoxyRegion* region) { data(thread)->_scratch = region; }
+
+  static bool allocate_global(Thread* thread)                  { return data(thread)->_allocate_global; }
+  static void set_allocate_global(Thread* thread, bool value)  { data(thread)->_allocate_global = value; }
 };
 
 #endif // SHARE_GC_EPOXY_EPOXYTHREADLOCALDATA_HPP

@@ -31,6 +31,8 @@
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
 #include "gc/epoxy/epoxyVerifier.hpp"
+#include "runtime/stackFrameStream.inline.hpp"
+#include "runtime/frame.inline.hpp"
 #include "gc/shared/markBitMap.inline.hpp"
 #include "gc/shared/oopStorage.inline.hpp"
 #include "gc/shared/oopStorageSet.inline.hpp"
@@ -250,6 +252,31 @@ public:
       switch (v._root_kind) {
         case EpoxyRootThread:
           tty->print("thread stack or thread-local oop of thread \"%s\"", v._thread->name());
+          if (v._thread->is_Java_thread()) {
+            // Say which frame the slot is in, and show the thread's stack once.
+            JavaThread* jt = JavaThread::cast(v._thread);
+            if (jt->has_last_Java_frame()) {
+              bool found = false;
+              for (StackFrameStream fst(jt, true /* update */, true /* process_frames */); !fst.is_done(); fst.next()) {
+                frame* f = fst.current();
+                if ((address)v._slot >= (address)f->sp() && (address)v._slot < (address)f->real_fp()) {
+                  tty->cr();
+                  tty->print("      in frame: ");
+                  f->print_on(tty);
+                  found = true;
+                  break;
+                }
+              }
+              if (!found) {
+                tty->print(" (slot is not inside a frame: a handle or other thread-local reference)");
+              }
+              if (i == 0) {
+                tty->cr();
+                tty->print_cr("      stack of that thread:");
+                jt->print_stack_on(tty);
+              }
+            }
+          }
           break;
         case EpoxyRootOopStorage:
           tty->print("OopStorage \"%s\"", v._storage != nullptr ? v._storage : "(unnamed)");
