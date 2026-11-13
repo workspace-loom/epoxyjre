@@ -26,7 +26,7 @@ package gc.epoxy;
 /**
  * @test TestScratchNeedsInterpreter
  * @requires vm.gc.Epoxy
- * @summary Until the compilers have the store barrier, a scratch region is refused unless the VM is interpreter-only
+ * @summary A scratch region is refused while a compiler without the store barrier (C2) can run
  * @library /test/lib
  * @build jdk.test.whitebox.WhiteBox
  * @run driver jdk.test.lib.helpers.ClassFileInstaller jdk.test.whitebox.WhiteBox

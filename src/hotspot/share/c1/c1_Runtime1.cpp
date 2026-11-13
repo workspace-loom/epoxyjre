@@ -40,6 +40,9 @@
 #include "compiler/disassembler.hpp"
 #include "compiler/oopMap.hpp"
 #include "gc/shared/barrierSet.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyBarrierSet.hpp"
+#endif
 #include "gc/shared/c1/barrierSetC1.hpp"
 #include "gc/shared/collectedHeap.hpp"
 #include "interpreter/bytecode.hpp"
@@ -347,6 +350,9 @@ const char* Runtime1::name_for_address(address entry) {
   FUNCTION_CASE(entry, SharedRuntime::dtrace_method_exit);
   FUNCTION_CASE(entry, is_instance_of);
   FUNCTION_CASE(entry, trace_block_entry);
+#if INCLUDE_EPOXY
+  FUNCTION_CASE(entry, EpoxyBarrierSet::store_barrier_entry);
+#endif
 #ifdef JFR_HAVE_INTRINSICS
   FUNCTION_CASE(entry, JfrTime::time_function());
 #endif

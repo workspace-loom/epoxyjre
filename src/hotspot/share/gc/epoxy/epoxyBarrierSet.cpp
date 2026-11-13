@@ -34,6 +34,7 @@
 #include "gc/shared/barrierSetAssembler.hpp"
 #include "runtime/javaThread.hpp"
 #ifdef COMPILER1
+#include "gc/epoxy/c1/epoxyBarrierSetC1.hpp"
 #include "gc/shared/c1/barrierSetC1.hpp"
 #endif
 #ifdef COMPILER2
@@ -42,7 +43,7 @@
 
 EpoxyBarrierSet::EpoxyBarrierSet() : BarrierSet(
           make_barrier_set_assembler<EpoxyBarrierSetAssembler>(),
-          make_barrier_set_c1<BarrierSetC1>(),
+          make_barrier_set_c1<EpoxyBarrierSetC1>(),
           make_barrier_set_c2<BarrierSetC2>(),
           nullptr /* barrier_set_nmethod */,
           nullptr /* barrier_set_stack_chunk */,
@@ -107,6 +108,29 @@ void EpoxyBarrierSet::on_store_slow(oop value, const void* addr, oop holder) {
     heap->promote(value);
   }
 }
+
+// Before count references are copied from src to dst (addresses of the first
+// elements). The destination array's start is not known here, so the holder
+// is judged by its page.
+JRT_LEAF(void, EpoxyBarrierSet::arraycopy_barrier_entry(void* src, void* dst, size_t count))
+  if (UseCompressedOops) {
+    narrowOop* p = (narrowOop*)src;
+    for (size_t i = 0; i < count; i++) {
+      narrowOop element = RawAccess<>::oop_load(p + i);
+      if (!CompressedOops::is_null(element)) {
+        EpoxyBarrierSet::on_store(CompressedOops::decode_not_null(element), dst, nullptr);
+      }
+    }
+  } else {
+    oop* p = (oop*)src;
+    for (size_t i = 0; i < count; i++) {
+      oop element = RawAccess<>::oop_load(p + i);
+      if (element != nullptr) {
+        EpoxyBarrierSet::on_store(element, dst, nullptr);
+      }
+    }
+  }
+JRT_END
 
 JRT_LEAF(void, EpoxyBarrierSet::store_barrier_entry(oopDesc* value, oopDesc* holder))
   EpoxyBarrierSet::on_store(cast_to_oop(value), holder, cast_to_oop(holder));

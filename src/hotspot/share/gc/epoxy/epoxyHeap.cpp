@@ -43,6 +43,7 @@
 #include "oops/access.inline.hpp"
 #include "oops/compressedOops.inline.hpp"
 #include "oops/oop.inline.hpp"
+#include "compiler/compilerDefinitions.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/javaThread.inline.hpp"
@@ -171,7 +172,9 @@ uint EpoxyHeap::scratch_depth(Thread* thread) {
 
 bool EpoxyHeap::enter_scratch(JavaThread* thread) {
   assert(thread == JavaThread::current(), "a thread enters its own regions");
-  if (!Arguments::is_interpreter_only()) {
+  // Only code with the store barrier may run while a region is open: the
+  // interpreter and C1 have it, C2 and JVMCI compilers do not yet.
+  if (!CompilerConfig::is_interpreter_only() && !CompilerConfig::is_c1_only()) {
     return false;
   }
   // Regions belong to platform threads. A virtual thread can move between

@@ -55,6 +55,7 @@ public:
   // Entry for generated code: value is not null; holder is the object being
   // stored into, or null for a store that is not into a heap object.
   static void store_barrier_entry(oopDesc* value, oopDesc* holder);
+  static void arraycopy_barrier_entry(void* src, void* dst, size_t count);
 
   template <DecoratorSet decorators, typename BarrierSetT = EpoxyBarrierSet>
   class AccessBarrier: public BarrierSet::AccessBarrier<decorators, BarrierSetT> {

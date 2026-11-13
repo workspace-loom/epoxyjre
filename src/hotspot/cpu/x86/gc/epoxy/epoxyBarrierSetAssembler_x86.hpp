@@ -27,6 +27,11 @@
 // references through MacroAssembler::store_heap_oop.
 class EpoxyBarrierSetAssembler: public BarrierSetAssembler {
 public:
+  // Array copy stubs, used by compiled code: every reference about to be
+  // copied is checked against the destination first.
+  virtual void arraycopy_prologue(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
+                                  Register src, Register dst, Register count);
+
   virtual void store_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                         Address dst, Register val, Register tmp1, Register tmp2, Register tmp3);
 };

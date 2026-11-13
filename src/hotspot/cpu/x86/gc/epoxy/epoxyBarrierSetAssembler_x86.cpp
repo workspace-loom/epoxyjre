@@ -26,6 +26,25 @@
 
 #define __ masm->
 
+void EpoxyBarrierSetAssembler::arraycopy_prologue(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
+                                                  Register src, Register dst, Register count) {
+  if (!is_reference_type(type)) {
+    return;
+  }
+  // The three values may be in argument registers in any order, so they go
+  // through the stack.
+  __ push_call_clobbered_registers();
+  __ push(src);
+  __ push(dst);
+  __ push(count);
+  __ pop(c_rarg2);
+  __ pop(c_rarg1);
+  __ pop(c_rarg0);
+  __ movl(c_rarg2, c_rarg2);   // the count is a non-negative 32-bit value: clear the upper half
+  __ MacroAssembler::call_VM_leaf_base(CAST_FROM_FN_PTR(address, EpoxyBarrierSet::arraycopy_barrier_entry), 3);
+  __ pop_call_clobbered_registers();
+}
+
 void EpoxyBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators, BasicType type,
                                         Address dst, Register val, Register tmp1, Register tmp2, Register tmp3) {
   // val == noreg stores null, which needs no barrier.
