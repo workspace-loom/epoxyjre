@@ -44,6 +44,13 @@
           "between 64K and 1M.")                                            \
           range(64 * K, 1 * M)                                              \
                                                                             \
+  product(bool, EpoxyProfile, false,                                        \
+          "Count promoted objects by class and global-space allocation by " \
+          "thread, and print both when the VM exits.")                      \
+                                                                            \
+  product(uintx, EpoxyProfileDelay, 0,                                      \
+          "Seconds after VM start before EpoxyProfile starts counting.")    \
+                                                                            \
   product(ccstr, EpoxyScopeFile, nullptr,                                   \
           "File naming the methods that run inside their own scratch "      \
           "region, one per line as package.Class.method with an optional "  \

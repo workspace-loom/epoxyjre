@@ -84,12 +84,15 @@ public class TestScopedSmallEscapes extends ScratchTestSupport {
     return it;
   }
 
+  // The checks run outside any region, where nothing is ever freed: no message
+  // is built unless a check fails.
   static void verifyItem(Item it, int id, String what) {
-    check(it != null, what + ": item " + id + " is missing");
-    check(it.id == id, what + ": item " + id + " has id " + it.id);
-    check(it.data != null && it.data.length == 4, what + ": item " + id + " has a wrong data array");
-    for (int j = 0; j < 4; j++) {
-      check(it.data[j] == id, what + ": item " + id + " data[" + j + "] is " + it.data[j]);
+    boolean ok = it != null && it.id == id && it.data != null && it.data.length == 4;
+    for (int j = 0; ok && j < 4; j++) {
+      ok = it.data[j] == id;
+    }
+    if (!ok) {
+      throw new RuntimeException(what + ": item " + id + " is missing or damaged");
     }
   }
 
@@ -164,12 +167,12 @@ public class TestScopedSmallEscapes extends ScratchTestSupport {
     depth(0, "after C calls");
     for (int i = 0; i < N / 5; i++) {
       Item x = chains[i];
-      check(x != null, "C: chain " + i + " is missing");
+      if (x == null) throw new RuntimeException("C: chain " + i + " is missing");
       for (int k = 0; k < 5; k++) {
-        verifyItem(x, i * 5 + k, "C: chain " + i + " element " + k);
+        verifyItem(x, i * 5 + k, "C: chain element");
         x = x.next;
       }
-      check(x == null, "C: chain " + i + " is longer than 5");
+      if (x != null) throw new RuntimeException("C: chain " + i + " is longer than 5");
     }
     System.out.println("C: ok");
 
@@ -180,7 +183,10 @@ public class TestScopedSmallEscapes extends ScratchTestSupport {
     depth(0, "after D calls");
     check(names.size() == N, "D: size is " + names.size());
     for (int i = 0; i < N; i++) {
-      check(names.get(i).equals("name-" + i), "D: element " + i + " is " + names.get(i));
+      String name = names.get(i);
+      if (name.length() < 6 || !name.startsWith("name-") || Integer.parseInt(name, 5, name.length(), 10) != i) {
+        throw new RuntimeException("D: element " + i + " is " + name);
+      }
     }
     System.out.println("D: ok");
 
@@ -191,7 +197,7 @@ public class TestScopedSmallEscapes extends ScratchTestSupport {
     depth(0, "after E calls");
     for (int k = 0; k < 64; k++) {
       int last = k + 64 * ((N - 1 - k) / 64);
-      verifyItem(slots[k], last, "E: slot " + k);
+      verifyItem(slots[k], last, "E: slot");
     }
     System.out.println("E: ok");
 

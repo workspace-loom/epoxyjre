@@ -25,6 +25,7 @@
 #include "memory/allocation.inline.hpp"
 #include "runtime/atomicAccess.hpp"
 #include "runtime/globals.hpp"
+#include "runtime/java.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/os.hpp"
 #include "utilities/align.hpp"

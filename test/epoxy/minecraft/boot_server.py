@@ -63,6 +63,7 @@ def main():
                          "server can (tick sprint) and pass as soon as they are done; --seconds is then "
                          "the time limit")
     ap.add_argument("--settle", type=int, default=20, help="seconds between the chunk load and the sprint")
+    ap.add_argument("--keep-log", action="store_true", help="keep the console log even when the check passes")
     ap.add_argument("--boot-timeout", type=int, default=600)
     ap.add_argument("--oom-timeout", type=int, default=900, help="for --expect oom: give up after this long")
     args = ap.parse_args()
@@ -121,7 +122,7 @@ def main():
         print(f"{'PASS' if ok else 'FAIL'}: {why}")
         print(f"survived {time.time() - start:.0f} s, last reported heap use {state['used_mb']:.0f} MB, "
               f"exit code {proc.returncode}")
-        if ok:
+        if ok and not args.keep_log:
             shutil.rmtree(workdir, ignore_errors=True)
         else:
             print(f"console log kept at {log_path}")

@@ -29,6 +29,7 @@
 #include "logging/log.hpp"
 #include "runtime/globals.hpp"
 #include "runtime/globals_extension.hpp"
+#include "runtime/java.hpp"
 #include "utilities/powerOfTwo.hpp"
 
 size_t EpoxyArguments::conservative_max_heap_alignment() {

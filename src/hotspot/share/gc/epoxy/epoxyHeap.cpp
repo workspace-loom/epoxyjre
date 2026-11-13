@@ -30,6 +30,7 @@
 #include "utilities/growableArray.hpp"
 #include "gc/epoxy/epoxyMemoryPool.hpp"
 #include "gc/epoxy/epoxyPageAllocator.hpp"
+#include "gc/epoxy/epoxyProfile.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
 #include "gc/epoxy/epoxyScopes.hpp"
 #include "gc/epoxy/epoxyThreadLocalData.hpp"
@@ -48,6 +49,7 @@
 #include "compiler/compilerDefinitions.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "runtime/globals.hpp"
+#include "runtime/java.hpp"
 #include "runtime/javaThread.inline.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/threads.hpp"
@@ -124,6 +126,9 @@ bool EpoxyHeap::mark_promoted(oop obj) {
   HeapWord* start = cast_from_oop<HeapWord*>(obj);
   _page_allocator->mark_lines_promoted(start, start + obj->size());
   _page_allocator->page_for(start)->note_promoted();
+  if (EpoxyProfile) {
+    EpoxyProfiler::note_promoted(obj->klass(), obj->size());
+  }
   return true;
 }
 
@@ -422,9 +427,13 @@ EpoxyHeap* EpoxyHeap::heap() {
 HeapWord* EpoxyHeap::allocate_work(size_t size) {
   assert(is_object_aligned(size), "Allocation size should be aligned: %zu", size);
 
-  HeapWord* res = allocation_region()->allocate(size);
+  EpoxyRegion* region = allocation_region();
+  HeapWord* res = region->allocate(size);
   if (res == nullptr) {
     return nullptr;
+  }
+  if (EpoxyProfile && region == _global_region) {
+    EpoxyProfiler::note_global(Thread::current(), size);
   }
 
   size_t used = this->used();
@@ -479,9 +488,13 @@ HeapWord* EpoxyHeap::allocate_new_tlab(size_t min_size,
   }
 
   // Take the rest of the current page if it can hold at least min_size.
-  HeapWord* res = allocation_region()->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
+  EpoxyRegion* region = allocation_region();
+  HeapWord* res = region->allocate(align_up(min_size, MinObjAlignment), size, actual_size);
   if (res != nullptr) {
     EpoxyThreadLocalData::set_tlab_words(thread, size);
+    if (EpoxyProfile && region == _global_region) {
+      EpoxyProfiler::note_global(thread, *actual_size);
+    }
   }
   return res;
 }
@@ -593,6 +606,9 @@ void EpoxyHeap::print_tracing_info() const {
   print_metaspace_info();
   if (_page_allocator != nullptr) {
     _page_allocator->log_stats(true /* with_small_holes */);
+  }
+  if (EpoxyProfile) {
+    EpoxyProfiler::print();
   }
 }
 

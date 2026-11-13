@@ -116,6 +116,10 @@ void GCConfig::select_gc_ergonomically() {
 #endif
   }
 #endif
+#if INCLUDE_EPOXY && !INCLUDE_G1GC && !INCLUDE_PARALLELGC && !INCLUDE_SERIALGC
+  // A JVM built without the stock collectors runs on Epoxy by default.
+  FLAG_SET_ERGO_IF_DEFAULT(UseEpoxy, true);
+#endif
 }
 
 bool GCConfig::is_no_gc_selected() {
