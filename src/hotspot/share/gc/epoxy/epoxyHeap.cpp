@@ -119,7 +119,11 @@ bool EpoxyHeap::mark_promoted(oop obj) {
   if (!_promoted_marks.par_mark(obj)) {
     return false;
   }
-  _page_allocator->page_for(cast_from_oop<void*>(obj))->note_promoted();
+  // Every line the object covers is kept when its region goes. Only the thread
+  // that owns the region promotes its objects, so nobody else writes these lines.
+  HeapWord* start = cast_from_oop<HeapWord*>(obj);
+  _page_allocator->mark_lines_promoted(start, start + obj->size());
+  _page_allocator->page_for(start)->note_promoted();
   return true;
 }
 
@@ -284,6 +288,20 @@ uint EpoxyHeap::scratch_depth(Thread* thread) {
   return scratch == nullptr ? 0 : scratch->depth() + 1;
 }
 
+// Pages kept from a released region that are not worth recycling (a list linked by next()).
+void EpoxyHeap::adopt(EpoxyPage* kept) {
+  if (kept == nullptr) {
+    return;
+  }
+  EpoxyPage* last = kept;
+  while (last->next() != nullptr) {
+    last = last->next();
+  }
+  MutexLocker ml(&_adopted_lock, Mutex::_no_safepoint_check_flag);
+  last->set_next(_adopted_pages);
+  _adopted_pages = kept;
+}
+
 bool EpoxyHeap::enter_scratch(JavaThread* thread) {
   assert(thread == JavaThread::current(), "a thread enters its own regions");
   // Only code with the store barrier may run while a region is open. The
@@ -330,15 +348,7 @@ void EpoxyHeap::exit_scratch(JavaThread* thread, address verify_skip_low, addres
 
   EpoxyPage* kept = nullptr;
   region->release(&kept);
-  if (kept != nullptr) {
-    EpoxyPage* last = kept;
-    while (last->next() != nullptr) {
-      last = last->next();
-    }
-    MutexLocker ml(&_adopted_lock, Mutex::_no_safepoint_check_flag);
-    last->set_next(_adopted_pages);
-    _adopted_pages = kept;
-  }
+  adopt(kept);
   delete region;
 }
 
@@ -350,15 +360,7 @@ void EpoxyHeap::exit_all_scratch(Thread* thread) {
     EpoxyRegion* parent = region->parent();
     EpoxyPage* kept = nullptr;
     region->release(&kept);
-    if (kept != nullptr) {
-      EpoxyPage* last = kept;
-      while (last->next() != nullptr) {
-        last = last->next();
-      }
-      MutexLocker ml(&_adopted_lock, Mutex::_no_safepoint_check_flag);
-      last->set_next(_adopted_pages);
-      _adopted_pages = kept;
-    }
+    adopt(kept);
     delete region;
     region = parent;
   }
@@ -516,14 +518,37 @@ void EpoxyHeap::do_full_collection(bool clear_all_soft_refs) {
   collect(gc_cause());
 }
 
-// Walks every scratch region of one thread.
+// Visits the promoted objects that earlier regions left in a page: the ones
+// whose first line is kept. A marked object on a line that belongs to a live
+// region lies in one of that region's spans and is visited there.
+void EpoxyHeap::kept_objects_iterate(EpoxyPage* page, ObjectClosure* cl) {
+  HeapWord* top = page->top();
+  HeapWord* addr = _promoted_marks.get_next_marked_addr(page->bottom(), top);
+  while (addr < top) {
+    oop obj = cast_to_oop(addr);
+    size_t size = obj->size();
+    if (_page_allocator->line_state(addr) == EpoxyLineKept) {
+      cl->do_object(obj);
+    }
+    addr = _promoted_marks.get_next_marked_addr(addr + size, top);
+  }
+}
+
+// Walks every scratch region of one thread: what each allocated in, and the
+// kept objects of the recycled pages it is working on.
 class EpoxyScratchIterateClosure : public ThreadClosure {
+  EpoxyHeap* _heap;
   ObjectClosure* _cl;
 public:
-  EpoxyScratchIterateClosure(ObjectClosure* cl) : _cl(cl) {}
+  EpoxyScratchIterateClosure(EpoxyHeap* heap, ObjectClosure* cl) : _heap(heap), _cl(cl) {}
   void do_thread(Thread* thread) override {
     for (EpoxyRegion* r = EpoxyThreadLocalData::scratch(thread); r != nullptr; r = r->parent()) {
       r->object_iterate(_cl);
+      for (EpoxyPage* page = r->first_page(); page != nullptr; page = page->next()) {
+        if (page->is_recycled()) {
+          _heap->kept_objects_iterate(page, _cl);
+        }
+      }
     }
   }
 };
@@ -531,19 +556,16 @@ public:
 void EpoxyHeap::object_iterate(ObjectClosure *cl) {
   assert(SafepointSynchronize::is_at_safepoint(), "the heap is walked only at a safepoint");
   _global_region->object_iterate(cl);
-  EpoxyScratchIterateClosure scratch(cl);
+  EpoxyScratchIterateClosure scratch(this, cl);
   Threads::java_threads_do(&scratch);
 
-  // Pages kept from released regions hold dead objects next to the promoted
-  // ones. Only the promoted ones are visited.
+  // Pages kept from released regions hold dead memory next to the promoted
+  // objects. Only the promoted ones are visited.
   for (EpoxyPage* page = _adopted_pages; page != nullptr; page = page->next()) {
-    HeapWord* top = page->top();
-    HeapWord* addr = _promoted_marks.get_next_marked_addr(page->bottom(), top);
-    while (addr < top) {
-      oop obj = cast_to_oop(addr);
-      cl->do_object(obj);
-      addr = _promoted_marks.get_next_marked_addr(addr + obj->size(), top);
-    }
+    kept_objects_iterate(page, cl);
+  }
+  for (EpoxyPage* page = _page_allocator->recyclable_pages(); page != nullptr; page = page->next()) {
+    kept_objects_iterate(page, cl);
   }
 }
 
@@ -569,6 +591,9 @@ bool EpoxyHeap::print_location(outputStream* st, void* addr) const {
 void EpoxyHeap::print_tracing_info() const {
   print_heap_info(used());
   print_metaspace_info();
+  if (_page_allocator != nullptr) {
+    _page_allocator->log_stats(true /* with_small_holes */);
+  }
 }
 
 void EpoxyHeap::print_heap_info(size_t used) const {

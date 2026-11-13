@@ -175,3 +175,149 @@ TEST_VM_F(EpoxyPageAllocatorTest, concurrent_allocate_and_free) {
   EXPECT_EQ(failures, 0);
   EXPECT_EQ(_allocator->used_pages(), (size_t)0);
 }
+
+// ---- line table ----
+
+static const size_t TestLinesPerPage = PageSize / EpoxyLineSize;
+static const size_t TestLineWords = EpoxyLineSize / HeapWordSize;
+
+TEST_VM_F(EpoxyPageAllocatorTest, lines_of_a_fresh_page_are_kept) {
+  EpoxyPage* page = _allocator->allocate(2);
+  ASSERT_NE(page, (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->lines_per_page(), TestLinesPerPage);
+  for (size_t l = 0; l < 2 * TestLinesPerPage; l++) {
+    EXPECT_EQ((uint)_allocator->line_state(page->bottom() + l * TestLineWords), (uint)EpoxyLineKept) << "line " << l;
+  }
+  EXPECT_FALSE(_allocator->is_scratch(page->bottom()));
+  EXPECT_FALSE(_allocator->is_scratch(_base - 1));
+}
+
+TEST_VM_F(EpoxyPageAllocatorTest, scratch_is_bit_zero_of_the_line_state) {
+  EpoxyPage* run = _allocator->allocate(3);
+  ASSERT_NE(run, (EpoxyPage*)nullptr);
+  _allocator->set_scratch(run, true);
+  // Every line of every page of the run.
+  EXPECT_TRUE(_allocator->is_scratch(run->bottom()));
+  EXPECT_TRUE(_allocator->is_scratch((char*)run->end() - 1));
+  EXPECT_EQ((uint)_allocator->line_state(run->bottom()), (uint)EpoxyLineScratch);
+
+  // A range that starts and ends inside lines marks every line it touches.
+  char* start = (char*)run->bottom() + 5 * EpoxyLineSize + 100;
+  char* end = (char*)run->bottom() + 7 * EpoxyLineSize + 1;
+  _allocator->mark_lines_promoted(start, end);
+  EXPECT_EQ((uint)_allocator->line_state(run->bottom() + 4 * TestLineWords), (uint)EpoxyLineScratch);
+  for (size_t l = 5; l <= 7; l++) {
+    EXPECT_EQ((uint)_allocator->line_state(run->bottom() + l * TestLineWords), (uint)EpoxyLineScratchPromoted);
+    EXPECT_TRUE(_allocator->is_scratch(run->bottom() + l * TestLineWords));
+  }
+  EXPECT_EQ((uint)_allocator->line_state(run->bottom() + 8 * TestLineWords), (uint)EpoxyLineScratch);
+  // A range that ends exactly on a line boundary does not touch the next line.
+  _allocator->mark_lines_promoted((char*)run->bottom() + 20 * EpoxyLineSize, (char*)run->bottom() + 21 * EpoxyLineSize);
+  EXPECT_EQ((uint)_allocator->line_state(run->bottom() + 20 * TestLineWords), (uint)EpoxyLineScratchPromoted);
+  EXPECT_EQ((uint)_allocator->line_state(run->bottom() + 21 * TestLineWords), (uint)EpoxyLineScratch);
+
+  _allocator->set_scratch(run, false);
+  EXPECT_FALSE(_allocator->is_scratch(run->bottom() + 6 * TestLineWords));
+  _allocator->set_scratch(run, true);
+  _allocator->free(run);
+  // Freed memory is no longer scratch, whatever state its lines had.
+  EXPECT_FALSE(_allocator->is_scratch(run->bottom() + 6 * TestLineWords));
+  EXPECT_FALSE(_allocator->is_scratch(run->bottom() + 2 * TestLinesPerPage * TestLineWords));
+}
+
+TEST_VM_F(EpoxyPageAllocatorTest, release_page_frees_a_page_with_nothing_kept) {
+  EpoxyPage* page = _allocator->allocate(1);
+  ASSERT_NE(page, (EpoxyPage*)nullptr);
+  _allocator->set_scratch(page, true);
+  EpoxyPageRelease r;
+  _allocator->release_page(page, &r);
+  EXPECT_TRUE(r.freed);
+  EXPECT_EQ(r.lines_freed, TestLinesPerPage);
+  EXPECT_EQ(r.lines_kept, (size_t)0);
+  EXPECT_EQ(_allocator->used_pages(), (size_t)0);
+  EXPECT_FALSE(_allocator->is_scratch(page->bottom()));
+}
+
+TEST_VM_F(EpoxyPageAllocatorTest, release_page_converts_lines_and_reports_the_largest_hole) {
+  EpoxyPage* page = _allocator->allocate(1);
+  ASSERT_NE(page, (EpoxyPage*)nullptr);
+  _allocator->set_scratch(page, true);
+  // Promoted lines 3 and 4, and 100.
+  _allocator->mark_lines_promoted(page->bottom() + 3 * TestLineWords, page->bottom() + 5 * TestLineWords);
+  _allocator->mark_lines_promoted(page->bottom() + 100 * TestLineWords, page->bottom() + 101 * TestLineWords);
+
+  EpoxyPageRelease r;
+  _allocator->release_page(page, &r);
+  EXPECT_FALSE(r.freed);
+  EXPECT_EQ(r.lines_kept, (size_t)3);
+  EXPECT_EQ(r.lines_freed, TestLinesPerPage - 3);
+  EXPECT_EQ(r.max_hole_lines, TestLinesPerPage - 101);   // after line 100
+  EXPECT_EQ(_allocator->used_pages(), (size_t)1);
+  for (size_t l = 0; l < TestLinesPerPage; l++) {
+    bool kept = (l == 3 || l == 4 || l == 100);
+    EXPECT_EQ((uint)_allocator->line_state(page->bottom() + l * TestLineWords),
+              kept ? (uint)EpoxyLineKept : (uint)EpoxyLineFree) << "line " << l;
+  }
+  EXPECT_FALSE(_allocator->is_scratch(page->bottom() + 3 * TestLineWords));
+  EXPECT_FALSE(_allocator->is_scratch(page->bottom() + 10 * TestLineWords));   // free is not scratch
+}
+
+TEST_VM_F(EpoxyPageAllocatorTest, find_and_take_hole) {
+  EpoxyPage* page = _allocator->allocate(1);
+  ASSERT_NE(page, (EpoxyPage*)nullptr);
+  _allocator->set_scratch(page, true);
+  // Kept: 2, 6, 7; the holes are lines 0-1 (2), 3-5 (3) and 8 to the end.
+  size_t promoted[] = {2, 6, 7};
+  for (size_t l : promoted) {
+    _allocator->mark_lines_promoted(page->bottom() + l * TestLineWords, page->bottom() + (l + 1) * TestLineWords);
+  }
+  EpoxyPageRelease r;
+  _allocator->release_page(page, &r);
+  ASSERT_FALSE(r.freed);
+
+  HeapWord* start = nullptr;
+  HeapWord* end = nullptr;
+  ASSERT_TRUE(_allocator->find_hole(page->bottom(), page->end(), 1, &start, &end));
+  EXPECT_EQ(start, page->bottom());
+  EXPECT_EQ(end, page->bottom() + 2 * TestLineWords);
+  ASSERT_TRUE(_allocator->find_hole(page->bottom(), page->end(), 3, &start, &end));   // skips the 2-line hole
+  EXPECT_EQ(start, page->bottom() + 3 * TestLineWords);
+  EXPECT_EQ(end, page->bottom() + 6 * TestLineWords);
+  ASSERT_TRUE(_allocator->find_hole(page->bottom() + 6 * TestLineWords, page->end(), 4, &start, &end));
+  EXPECT_EQ(start, page->bottom() + 8 * TestLineWords);
+  EXPECT_EQ(end, page->end());
+  EXPECT_FALSE(_allocator->find_hole(page->bottom(), page->end(), TestLinesPerPage, &start, &end));
+
+  // Taking a hole turns its lines to scratch; it is no longer found.
+  _allocator->take_hole(page->bottom() + 3 * TestLineWords, page->bottom() + 6 * TestLineWords);
+  EXPECT_TRUE(_allocator->is_scratch(page->bottom() + 3 * TestLineWords));
+  EXPECT_TRUE(_allocator->is_scratch(page->bottom() + 5 * TestLineWords));
+  EXPECT_FALSE(_allocator->is_scratch(page->bottom() + 6 * TestLineWords));
+  ASSERT_TRUE(_allocator->find_hole(page->bottom(), page->end(), 3, &start, &end));
+  EXPECT_EQ(start, page->bottom() + 8 * TestLineWords);
+}
+
+TEST_VM_F(EpoxyPageAllocatorTest, recyclable_list_hands_each_page_out_once) {
+  EpoxyPage* a = _allocator->allocate(1);
+  EpoxyPage* b = _allocator->allocate(1);
+  ASSERT_NE(a, (EpoxyPage*)nullptr);
+  ASSERT_NE(b, (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->take_recyclable((EpoxyRegion*)0x10), (EpoxyPage*)nullptr);
+
+  _allocator->add_recyclable(a);
+  _allocator->add_recyclable(b);
+  EXPECT_EQ(_allocator->recyclable_count(), (size_t)2);
+  EXPECT_EQ(_allocator->recyclable_pages(), b);
+
+  EpoxyRegion* owner = (EpoxyRegion*)0x10;
+  EpoxyPage* first = _allocator->take_recyclable(owner);
+  EpoxyPage* second = _allocator->take_recyclable(owner);
+  EXPECT_NE(first, second);
+  EXPECT_TRUE((first == a && second == b) || (first == b && second == a));
+  EXPECT_EQ(first->owner(), owner);
+  EXPECT_TRUE(first->is_recycled());
+  EXPECT_EQ(first->next(), (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->recyclable_count(), (size_t)0);
+  EXPECT_EQ(_allocator->take_recyclable(owner), (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->stats()->pages_reused, (size_t)2);
+}

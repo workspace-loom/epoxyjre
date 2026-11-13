@@ -47,6 +47,13 @@ void EpoxyArguments::initialize() {
     FLAG_SET_DEFAULT(ExitOnOutOfMemoryError, true);
   }
 
+  // A TLAB is handed out from one hole of a recycled page, and a hole can be
+  // as small as a few lines: the default minimum TLAB would make most of them
+  // unusable.
+  if (FLAG_IS_DEFAULT(MinTLABSize)) {
+    FLAG_SET_DEFAULT(MinTLABSize, 512);
+  }
+
 #ifdef COMPILER2
   // Enable loop strip mining: there are still non-GC safepoints, no need to make it worse
   if (FLAG_IS_DEFAULT(UseCountedLoopSafepoints)) {

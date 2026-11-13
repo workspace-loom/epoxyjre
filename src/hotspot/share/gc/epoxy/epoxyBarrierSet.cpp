@@ -88,12 +88,13 @@ void EpoxyBarrierSet::on_store_slow(oop value, const void* addr, oop holder) {
     return;
   }
 
-  // The holder is in a scratch page. If it has been promoted it outlives
+  // The holder is in a scratch line. If it has been promoted it outlives
   // every region, wherever it lies, and other threads may reach it. When the
-  // holder's start is unknown, assume so if anything on its page has been.
+  // holder's start is unknown, assume so if the line holds part of a promoted
+  // object: promotion marks every line the object covers.
   EpoxyPage* holder_page = pages->page_for(addr);
   bool holder_promoted = (holder != nullptr) ? heap->is_promoted(holder)
-                                             : holder_page->promoted_count() > 0;
+                                             : pages->line_state(addr) == EpoxyLineScratchPromoted;
   if (holder_promoted) {
     heap->promote(value);
     return;

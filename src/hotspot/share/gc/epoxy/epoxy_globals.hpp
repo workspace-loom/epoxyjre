@@ -59,6 +59,17 @@
           "roots and fail if anything reachable is about to be freed. "     \
           "Test tooling; not present in product builds.")                   \
                                                                             \
+  develop(size_t, EpoxyMinRecycleLines, 8,                                  \
+          "A page kept by a released scratch region goes on the "           \
+          "recyclable list if it has a hole (a run of free lines) of at "   \
+          "least this many 256-byte lines.")                                \
+          range(1, 1024)                                                    \
+                                                                            \
+  develop(size_t, EpoxyMaxRecycleBytes, 2 * K,                              \
+          "A scratch region allocates requests of at most this many bytes " \
+          "in the holes of recycled pages; bigger ones go to fresh pages.") \
+          range(256, 64 * K)                                                \
+                                                                            \
   product(size_t, EpoxyPrintHeapSteps, 20,                                  \
           "Print heap occupancy stats with this number of steps. "          \
           "0 turns the printing off.")                                      \

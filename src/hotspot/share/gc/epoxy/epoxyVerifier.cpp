@@ -420,18 +420,17 @@ public:
     // Everything reachable from the roots.
     cl.drain();
 
-    // Every promoted object on the region's pages, reachable or not.
+    // Every promoted object in what the region allocated in, reachable or
+    // not. Promoted objects that earlier regions left in the kept lines of a
+    // recycled page were checked when those regions were released.
     const MarkBitMap* marks = heap->promoted_marks();
-    for (EpoxyPage* page = _region->first_page(); page != nullptr; page = page->next()) {
-      if (page->promoted_count() == 0) {
-        continue;
-      }
-      HeapWord* top = page->top();
-      HeapWord* addr = marks->get_next_marked_addr(page->bottom(), top);
-      while (addr < top) {
+    for (int i = 0; i < _region->span_count(); i++) {
+      EpoxySpan span = _region->span_at(i);
+      HeapWord* addr = marks->get_next_marked_addr(span.start, span.top);
+      while (addr < span.top) {
         oop obj = cast_to_oop(addr);
         cl.scan_promoted_object(obj);
-        addr = marks->get_next_marked_addr(addr + obj->size(), top);
+        addr = marks->get_next_marked_addr(addr + obj->size(), span.top);
       }
     }
 

@@ -21,6 +21,7 @@
 #include "gc/epoxy/epoxyBarrierSet.hpp"
 #include "gc/epoxy/epoxyBarrierSetAssembler.hpp"
 #include "gc/epoxy/epoxyHeap.hpp"
+#include "gc/epoxy/epoxyPage.hpp"
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "runtime/sharedRuntime.hpp"
 
@@ -55,7 +56,7 @@ void EpoxyBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decor
     Label done;
 
     // val is an uncompressed reference here. Skip the call unless it points
-    // into a scratch page: one unsigned range check and one byte load.
+    // into a scratch line: one unsigned range check and one byte test.
     __ testptr(val, val);
     __ jcc(Assembler::zero, done);
 
@@ -71,10 +72,10 @@ void EpoxyBarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decor
     __ mov64(rscratch1, (int64_t)pages->reserved().byte_size());
     __ cmpptr(rax, rscratch1);
     __ jcc(Assembler::aboveEqual, not_scratch);
-    __ shrptr(rax, pages->page_shift());
-    __ mov64(rscratch1, (int64_t)(intptr_t)pages->kind_table());
-    __ cmpb(Address(rscratch1, rax, Address::times_1), 0);
-    __ jcc(Assembler::equal, not_scratch);
+    __ shrptr(rax, EpoxyLineShift);
+    __ mov64(rscratch1, (int64_t)(intptr_t)pages->line_table());
+    __ testb(Address(rscratch1, rax, Address::times_1), 1);   // bit 0 of the line state: scratch
+    __ jcc(Assembler::zero, not_scratch);
     __ pop(rax);
 
     // Slow path: let the runtime decide. Every register the caller may be
