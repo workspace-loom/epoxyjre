@@ -40,6 +40,7 @@ private:
   const bool                _scratch;
   EpoxyRegion*              _parent;       // enclosing scratch region of the same thread
   uint                      _depth;        // 0 for a region with no parent
+  intptr_t*                 _scope_frame;  // frame pointer of the method activation that opened it, or null
 
   EpoxyPage* volatile _current;      // page small allocations bump into; null before the first one
   EpoxyPage*          _first;        // pages in the order they were taken
@@ -56,6 +57,8 @@ public:
   bool is_scratch() const          { return _scratch; }
   EpoxyRegion* parent() const      { return _parent; }
   uint depth() const               { return _depth; }
+  intptr_t* scope_frame() const    { return _scope_frame; }
+  void set_scope_frame(intptr_t* fp) { _scope_frame = fp; }
   void set_parent(EpoxyRegion* parent) {
     _parent = parent;
     _depth = (parent == nullptr) ? 0 : parent->depth() + 1;

@@ -35,6 +35,9 @@
 #include "interpreter/bytecodeTracer.hpp"
 #include "interpreter/interpreter.hpp"
 #include "interpreter/interpreterRuntime.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyScopes.hpp"
+#endif
 #include "interpreter/linkResolver.hpp"
 #include "interpreter/oopMapCache.hpp"
 #include "interpreter/templateTable.hpp"
@@ -1249,6 +1252,18 @@ JRT_ENTRY(void, InterpreterRuntime::post_field_modification(JavaThread* current,
   JvmtiExport::post_raw_field_modification(current, last_frame.method(), last_frame.bcp(), ik, h_obj,
                                            fid, sig_type, &fvalue);
 JRT_END
+
+#if INCLUDE_EPOXY
+JRT_ENTRY(void, InterpreterRuntime::epoxy_scope_enter(JavaThread* current))
+  LastFrameAccessor last_frame(current);
+  EpoxyScopes::enter(current, last_frame.get_frame());
+JRT_END
+
+JRT_ENTRY(void, InterpreterRuntime::epoxy_scope_exit(JavaThread* current, oopDesc* result))
+  LastFrameAccessor last_frame(current);
+  EpoxyScopes::exit(current, last_frame.get_frame(), result);
+JRT_END
+#endif // INCLUDE_EPOXY
 
 JRT_ENTRY(void, InterpreterRuntime::post_method_entry(JavaThread* current))
   LastFrameAccessor last_frame(current);

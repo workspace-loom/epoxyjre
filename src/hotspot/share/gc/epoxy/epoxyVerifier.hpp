@@ -41,7 +41,11 @@ public:
   // describing the first few violations if any reachable reference points
   // into `region` at an object for which is_promoted is false, or at memory
   // that is not in the heap.
-  static void verify_release(JavaThread* thread, EpoxyRegion* region);
+  // [skip_low, skip_high] is a range of the releasing thread's own stack whose
+  // slots are not checked: the frame of the method activation being left,
+  // whose locals die with it. Both null to check everything.
+  static void verify_release(JavaThread* thread, EpoxyRegion* region,
+                             address skip_low = nullptr, address skip_high = nullptr);
 };
 
 #endif // ASSERT

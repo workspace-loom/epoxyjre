@@ -56,6 +56,9 @@
 #include "oops/jmethodIDTable.hpp"
 #include "oops/klass.inline.hpp"
 #include "oops/method.inline.hpp"
+#if INCLUDE_EPOXY
+#include "gc/epoxy/epoxyScopes.hpp"
+#endif
 #include "oops/methodData.hpp"
 #include "oops/objArrayKlass.hpp"
 #include "oops/objArrayOop.inline.hpp"
@@ -1256,6 +1259,11 @@ void Method::remove_unshareable_flags() {
 // Called when the method_holder is getting linked. Setup entrypoints so the method
 // is ready to be called from interpreter, compiler, and vtables.
 void Method::link_method(const methodHandle& h_method, TRAPS) {
+#if INCLUDE_EPOXY
+  if (UseEpoxy) {
+    EpoxyScopes::mark_if_listed(this);
+  }
+#endif
   if (log_is_enabled(Info, perf, class, link)) {
     ClassLoader::perf_ik_link_methods_count()->inc();
   }

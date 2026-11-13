@@ -44,6 +44,11 @@
           "between 64K and 1M.")                                            \
           range(64 * K, 1 * M)                                              \
                                                                             \
+  product(ccstr, EpoxyScopeFile, nullptr,                                   \
+          "File naming the methods that run inside their own scratch "      \
+          "region, one per line as package.Class.method with an optional "  \
+          "descriptor.")                                                    \
+                                                                            \
   develop(bool, EpoxyStoreBarrier, true,                                    \
           "Promote objects that escape a scratch region. Turning this "     \
           "off makes the VM unsafe; it exists so that tests can show the "  \

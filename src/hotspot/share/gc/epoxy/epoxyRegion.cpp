@@ -20,6 +20,7 @@
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
 #include "gc/shared/collectedHeap.hpp"
+#include "logging/log.hpp"
 #include "memory/iterator.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/atomicAccess.hpp"
@@ -33,6 +34,7 @@ EpoxyRegion::EpoxyRegion(EpoxyPageAllocator* pages, const char* name, bool scrat
     _scratch(scratch),
     _parent(nullptr),
     _depth(0),
+    _scope_frame(nullptr),
     _current(nullptr),
     _first(nullptr),
     _last(nullptr),
@@ -173,12 +175,18 @@ void EpoxyRegion::release(EpoxyPage** kept) {
   MutexLocker ml(&_lock, Mutex::_no_safepoint_check_flag);
 
   EpoxyPage* kept_list = nullptr;
+  size_t freed_pages = 0;
+  size_t kept_pages = 0;
+  size_t promoted_objects = 0;
   EpoxyPage* page = _first;
   while (page != nullptr) {
     EpoxyPage* next = page->next();
     if (page->promoted_count() == 0) {
+      freed_pages += page->run_length();
       _pages->free(page);
     } else {
+      kept_pages += page->run_length();
+      promoted_objects += page->promoted_count();
       _pages->set_scratch(page, false);
       page->set_owner(nullptr);
       page->set_next(kept_list);
@@ -192,6 +200,8 @@ void EpoxyRegion::release(EpoxyPage** kept) {
   _last = nullptr;
   AtomicAccess::store(&_owned_pages, (size_t)0);
   *kept = kept_list;
+  log_debug(gc, region)("Epoxy region released: %zu pages freed, %zu kept for %zu promoted objects",
+                        freed_pages, kept_pages, promoted_objects);
 }
 
 size_t EpoxyRegion::used_bytes() const {

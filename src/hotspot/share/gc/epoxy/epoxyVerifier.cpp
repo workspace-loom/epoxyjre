@@ -101,6 +101,12 @@ private:
   size_t         _visited_count;
 
   bool _scanning_promoted;
+
+  Thread* _releasing_thread;
+
+  address _skip_low;
+
+  address _skip_high;
   int            _total;                  // violations found, including the ones not kept
   EpoxyViolation _violations[MaxViolations];
 
@@ -137,6 +143,10 @@ private:
     oop obj = RawAccess<>::oop_load(p);
     if (obj == nullptr) {
       return;
+    }
+    if (_root_kind == EpoxyRootThread && _thread == _releasing_thread &&
+        (address)p >= _skip_low && (address)p <= _skip_high && _skip_low != nullptr) {
+      return;  // a slot of the activation that is being left
     }
     if (_scanning_promoted) {
       // A promoted object outlives every region: nothing it refers to may
@@ -180,6 +190,9 @@ public:
       _stack(stack),
       _visited_count(0),
       _scanning_promoted(false),
+      _releasing_thread(nullptr),
+      _skip_low(nullptr),
+      _skip_high(nullptr),
       _total(0),
       _root_kind(EpoxyRootThread),
       _holder(nullptr),
@@ -235,6 +248,12 @@ public:
     _holder = obj;
     obj->oop_iterate(this);
     _scanning_promoted = false;
+  }
+
+  void set_skipped_range(Thread* releasing_thread, address low, address high) {
+    _releasing_thread = releasing_thread;
+    _skip_low = low;
+    _skip_high = high;
   }
 
   int total_violations() const    { return _total; }
@@ -349,10 +368,12 @@ class VM_EpoxyVerifyRelease : public VM_Operation {
 private:
   JavaThread* const  _thread;
   EpoxyRegion* const _region;
+  const address      _skip_low;
+  const address      _skip_high;
 
 public:
-  VM_EpoxyVerifyRelease(JavaThread* thread, EpoxyRegion* region) :
-      _thread(thread), _region(region) {}
+  VM_EpoxyVerifyRelease(JavaThread* thread, EpoxyRegion* region, address skip_low, address skip_high) :
+      _thread(thread), _region(region), _skip_low(skip_low), _skip_high(skip_high) {}
 
   VMOp_Type type() const override { return VMOp_GC_HeapInspection; }
 
@@ -364,6 +385,7 @@ public:
     CHeapBitMap visited((reserved.word_size() >> LogMinObjAlignment) + 1, mtGC);
     GrowableArrayCHeap<oop, mtGC> stack;
     EpoxyVerifyClosure cl(heap, _region, &visited, &stack);
+    cl.set_skipped_range(_thread, _skip_low, _skip_high);
 
     // Threads: every JavaThread and the VM thread, the same set as
     // Threads::oops_do, but one at a time so a slot can be blamed on a thread.
@@ -422,10 +444,10 @@ public:
   }
 };
 
-void EpoxyVerifier::verify_release(JavaThread* thread, EpoxyRegion* region) {
+void EpoxyVerifier::verify_release(JavaThread* thread, EpoxyRegion* region, address skip_low, address skip_high) {
   assert(thread == JavaThread::current(), "must be the releasing thread");
   assert(region != nullptr && region->is_scratch(), "must release a scratch region");
-  VM_EpoxyVerifyRelease op(thread, region);
+  VM_EpoxyVerifyRelease op(thread, region, skip_low, skip_high);
   VMThread::execute(&op);
 }
 

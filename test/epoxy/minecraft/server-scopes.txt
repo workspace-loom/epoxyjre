@@ -1,0 +1,11 @@
+# Methods of the Minecraft dedicated server that run inside their own scratch
+# region. Pass with -XX:EpoxyScopeFile=<this file>.
+
+# One region per server tick, and one per wait between ticks (the server
+# thread runs queued tasks there).
+net.minecraft.server.MinecraftServer.tickServer
+net.minecraft.server.MinecraftServer.waitUntilNextTick
+
+# One region per task on the worker pool: chunk generation, lighting and
+# other background work all pass through here.
+java.util.concurrent.ForkJoinTask.doExec

@@ -1,0 +1,15 @@
+# Methods of TestScopedMethods that run inside their own scratch region.
+gc.epoxy.TestScopedMethods.garbage
+gc.epoxy.TestScopedMethods.makeGraph
+gc.epoxy.TestScopedMethods.makeString
+gc.epoxy.TestScopedMethods.primitive
+gc.epoxy.TestScopedMethods.returnsNull
+gc.epoxy.TestScopedMethods.thrower
+gc.epoxy.TestScopedMethods.escaper
+gc.epoxy.TestScopedMethods.outer
+gc.epoxy.TestScopedMethods.inner
+gc.epoxy.TestScopedMethods.recurse
+
+# Only the overload taking an int.
+gc.epoxy.TestScopedMethods.overloaded(I)I
+gc.epoxy.TestScopedMethods$Worker.run

@@ -1,0 +1,16 @@
+# Methods of TestScopedEvacuation that run inside their own scratch region.
+gc.epoxy.TestScopedEvacuation.ringScenario
+gc.epoxy.TestScopedEvacuation.sharedScenario
+gc.epoxy.TestScopedEvacuation.selfReferenceScenario
+gc.epoxy.TestScopedEvacuation.identityScenario
+gc.epoxy.TestScopedEvacuation.bigArrayScenario
+gc.epoxy.TestScopedEvacuation.mixedLifetimesScenario
+gc.epoxy.TestScopedEvacuation.argumentScenario
+gc.epoxy.TestScopedEvacuation.throwScenario
+gc.epoxy.TestScopedEvacuation.innerLevel
+gc.epoxy.TestScopedEvacuation.outerLevel
+gc.epoxy.TestScopedEvacuation.stringsScenario
+gc.epoxy.TestScopedEvacuation.smallValue
+gc.epoxy.TestScopedEvacuation.nullAfterGarbage
+gc.epoxy.TestScopedEvacuation.arraySum
+gc.epoxy.TestScopedEvacuation.churn

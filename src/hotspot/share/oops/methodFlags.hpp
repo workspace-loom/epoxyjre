@@ -57,6 +57,7 @@ class MethodFlags {
    status(has_loops_flag              , 1 << 13) /* Method has loops */ \
    status(has_loops_flag_init         , 1 << 14) /* The loop flag has been initialized */ \
    status(on_stack_flag               , 1 << 15) /* RedefineClasses support to keep Metadata from being cleaned */ \
+   status(epoxy_scope                 , 1 << 16) /* Runs inside its own Epoxy scratch region; interpreted only */ \
    /* end of list */
 
 #define M_STATUS_ENUM_NAME(name, value)    _misc_##name = value,
@@ -86,6 +87,8 @@ class MethodFlags {
 #undef M_STATUS_GET_SET
 
   int as_int() const { return _status; }
+  static ByteSize status_offset() { return byte_offset_of(MethodFlags, _status); }
+  static u4 epoxy_scope_bit()     { return _misc_epoxy_scope; }
   void atomic_set_bits(u4 bits)   { AtomicAccess::fetch_then_or(&_status, bits); }
   void atomic_clear_bits(u4 bits) { AtomicAccess::fetch_then_and(&_status, ~bits); }
   void print_on(outputStream* st) const;

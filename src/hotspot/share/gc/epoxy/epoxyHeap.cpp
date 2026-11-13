@@ -26,10 +26,12 @@
 #include "gc/epoxy/epoxyHeap.hpp"
 #include "gc/epoxy/epoxyInitLogger.hpp"
 #include "gc/shared/markBitMap.inline.hpp"
+#include "utilities/copy.hpp"
 #include "utilities/growableArray.hpp"
 #include "gc/epoxy/epoxyMemoryPool.hpp"
 #include "gc/epoxy/epoxyPageAllocator.hpp"
 #include "gc/epoxy/epoxyRegion.hpp"
+#include "gc/epoxy/epoxyScopes.hpp"
 #include "gc/epoxy/epoxyThreadLocalData.hpp"
 #include "gc/epoxy/epoxyVerifier.hpp"
 #include "gc/shared/gcArguments.hpp"
@@ -85,6 +87,9 @@ jint EpoxyHeap::initialize() {
   _max_tlab_size = MIN2(CollectedHeap::max_tlab_size(), align_object_size(_page_size_bytes / HeapWordSize));
   _step_counter_update = MIN2<size_t>(max_byte_size / 16, EpoxyUpdateCountersStep);
   _step_heap_print = (EpoxyPrintHeapSteps == 0) ? SIZE_MAX : (max_byte_size / EpoxyPrintHeapSteps);
+
+  // Methods that run in their own regions
+  EpoxyScopes::initialize();
 
   // Enable monitoring
   _monitoring_support = new EpoxyMonitoringSupport(this);
@@ -160,6 +165,81 @@ void EpoxyHeap::promote(oop obj) {
   }
 }
 
+// Applied to a copy: redirects every reference to an unpromoted object of the
+// region being left to that object's copy, making the copy first if needed.
+class EpoxyEvacuateClosure : public BasicOopIterateClosure {
+  EpoxyHeap* const _heap;
+  EpoxyPageAllocator* const _pages;
+  EpoxyRegion* const _from;
+  EpoxyRegion* const _to;
+  GrowableArrayCHeap<oop, mtGC>* const _copies;
+
+  template <typename T>
+  void do_oop_work(T* p) {
+    T element = RawAccess<>::oop_load(p);
+    if (CompressedOops::is_null(element)) {
+      return;
+    }
+    oop obj = CompressedOops::decode_not_null(element);
+    if (!must_move(obj)) {
+      return;
+    }
+    RawAccess<IS_NOT_NULL>::oop_store(p, copy(obj));
+  }
+
+public:
+  EpoxyEvacuateClosure(EpoxyHeap* heap, EpoxyRegion* from, EpoxyRegion* to, GrowableArrayCHeap<oop, mtGC>* copies) :
+      _heap(heap), _pages(heap->page_allocator()), _from(from), _to(to), _copies(copies) {}
+
+  bool must_move(oop obj) const {
+    void* addr = cast_from_oop<void*>(obj);
+    if (!_pages->is_scratch(addr) || _pages->page_for(addr)->owner() != _from) {
+      return false;
+    }
+    // A forwarded object has lost its header; it was unpromoted when it was copied.
+    return obj->is_forwarded() || !_heap->is_promoted(obj);
+  }
+
+  // The copy of obj, made now if this is the first reference to it.
+  oop copy(oop obj) {
+    if (obj->is_forwarded()) {
+      return obj->forwardee();
+    }
+    size_t size = obj->size();
+    HeapWord* memory = _to->allocate(size);
+    if (memory == nullptr) {
+      vm_exit_out_of_memory(size * HeapWordSize, OOM_MALLOC_ERROR,
+                            "Epoxy: no memory to move an object out of a scratch region");
+    }
+    Copy::aligned_disjoint_words(cast_from_oop<HeapWord*>(obj), memory, size);
+    oop moved = cast_to_oop(memory);
+    obj->forward_to(moved);
+    _copies->push(moved);
+    return moved;
+  }
+
+  void do_oop(oop* p) override       { do_oop_work(p); }
+  void do_oop(narrowOop* p) override { do_oop_work(p); }
+  ReferenceIterationMode reference_iteration_mode() override { return DO_FIELDS; }
+};
+
+oop EpoxyHeap::evacuate(EpoxyRegion* region, oop root, EpoxyRegion* target) {
+  if (target == nullptr) {
+    target = _global_region;
+  }
+  GrowableArrayCHeap<oop, mtGC> copies(32);
+  EpoxyEvacuateClosure closure(this, region, target, &copies);
+  if (root == nullptr || !closure.must_move(root)) {
+    return root;
+  }
+  oop moved_root = closure.copy(root);
+  while (!copies.is_empty()) {
+    oop moved = copies.pop();
+    moved->oop_iterate(&closure);
+  }
+  return moved_root;
+}
+
 EpoxyRegion* EpoxyHeap::allocation_region() const {
   Thread* thread = Thread::current();
   EpoxyRegion* scratch = EpoxyThreadLocalData::scratch(thread);
@@ -230,14 +310,14 @@ bool EpoxyHeap::enter_scratch(JavaThread* thread) {
   return true;
 }
 
-void EpoxyHeap::exit_scratch(JavaThread* thread) {
+void EpoxyHeap::exit_scratch(JavaThread* thread, address verify_skip_low, address verify_skip_high) {
   assert(thread == JavaThread::current(), "a thread leaves its own regions");
   EpoxyRegion* region = EpoxyThreadLocalData::scratch(thread);
   assert(region != nullptr, "not in a scratch region");
 
 #ifdef ASSERT
   if (EpoxyVerifyScratchExit) {
-    EpoxyVerifier::verify_release(thread, region);
+    EpoxyVerifier::verify_release(thread, region, verify_skip_low, verify_skip_high);
   }
 #endif
 

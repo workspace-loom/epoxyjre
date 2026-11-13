@@ -96,7 +96,9 @@ public:
   // while compiled code could run, because only the interpreter and the VM's
   // own stores have the barrier that promotes escaping objects.
   bool enter_scratch(JavaThread* thread);
-  void exit_scratch(JavaThread* thread);
+  // [verify_skip_low, verify_skip_high] is passed on to the debug verifier:
+  // stack slots in that range belong to the activation being left.
+  void exit_scratch(JavaThread* thread, address verify_skip_low = nullptr, address verify_skip_high = nullptr);
   void exit_all_scratch(Thread* thread);
   static uint scratch_depth(Thread* thread);
 
@@ -108,6 +110,18 @@ public:
   void promote(oop obj);
   // Marks one object; false if it was promoted already.
   bool mark_promoted(oop obj);
+
+  // Moves root, and every unpromoted object of region that it reaches, out
+  // of region and into target (the global space when target is null), and
+  // returns root's new address. root is returned unchanged if it is not an
+  // unpromoted object of region.
+  //
+  // Only for a region the calling thread is about to release, and only for
+  // references that leave it through the stack: an unpromoted object is
+  // visible to nobody but its thread, and once the method that opened the
+  // region is over, the stack holds no other reference to it. Promoted
+  // objects are never moved.
+  oop evacuate(EpoxyRegion* region, oop root, EpoxyRegion* target);
 
   // The region the calling thread allocates in.
   EpoxyRegion* allocation_region() const;

@@ -138,6 +138,10 @@ private:
     ResolvedFieldEntry* entry, jvalue *value);
   static void post_method_entry(JavaThread* current);
   static void post_method_exit (JavaThread* current);
+#if INCLUDE_EPOXY
+  static void epoxy_scope_enter(JavaThread* current);
+  static void epoxy_scope_exit (JavaThread* current, oopDesc* result);
+#endif
   static int  interpreter_contains(address pc);
 
   // Native signature handlers
