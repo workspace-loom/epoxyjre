@@ -26,6 +26,19 @@
 class EpoxyPageAllocator;
 class EpoxyRegion;
 
+// Liveness is tracked per line of 256 bytes. The line table has one byte per
+// line for the whole heap and is owned by EpoxyPageAllocator. Bit 0 set means
+// "scratch": the line belongs to a live scratch region.
+const size_t EpoxyLineSize  = 256;
+const int    EpoxyLineShift = 8;
+
+enum EpoxyLineState : uint8_t {
+  EpoxyLineKept            = 0,  // not scratch: global data, or promoted data left behind by a released region
+  EpoxyLineScratch         = 1,  // allocated in by the region that owns the page; nothing promoted touches it
+  EpoxyLineFree            = 2,  // free space inside a page that also has kept lines; reusable
+  EpoxyLineScratchPromoted = 3   // scratch line holding at least part of a promoted object
+};
+
 // Metadata for one heap page. Instances live in a side array owned by
 // EpoxyPageAllocator, never inside the page itself, so freeing a page never
 // has to touch its memory.
@@ -44,6 +57,7 @@ private:
   EpoxyRegion*       _owner;
   EpoxyPage*         _next;
   volatile uint      _promoted;    // promoted objects that start in this run
+  bool               _recycled;    // taken from the recyclable list by its owner, so it holds kept lines
 
 public:
   HeapWord* bottom() const            { return _bottom; }
@@ -58,8 +72,13 @@ public:
   void note_promoted()                { AtomicAccess::inc(&_promoted); }
   uint promoted_count() const         { return AtomicAccess::load(&_promoted); }
 
+  // The live scratch region currently allocating in this page, or null.
   EpoxyRegion* owner() const          { return _owner; }
   void set_owner(EpoxyRegion* owner)  { _owner = owner; }
+
+  // True while the owner allocates in the free lines of a page that also holds
+  // promoted data from earlier regions. Such a page is not walkable.
+  bool is_recycled() const            { return _recycled; }
 
   EpoxyPage* next() const             { return _next; }
   void set_next(EpoxyPage* next)      { _next = next; }

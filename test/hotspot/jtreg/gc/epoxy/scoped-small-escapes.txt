@@ -1,0 +1,6 @@
+# Methods of TestScopedSmallEscapes that run inside their own scratch region.
+gc.epoxy.TestScopedSmallEscapes.oneSurvivor
+gc.epoxy.TestScopedSmallEscapes.survivorInTheMiddle
+gc.epoxy.TestScopedSmallEscapes.chainSurvivors
+gc.epoxy.TestScopedSmallEscapes.addName
+gc.epoxy.TestScopedSmallEscapes.replaceSlot

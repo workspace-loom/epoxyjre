@@ -59,6 +59,8 @@ private:
 
   static const size_t MinPages = 16;
 
+  void adopt(EpoxyPage* kept);
+
   void print_tracing_info() const override;
   void stop() override {};
 
@@ -110,6 +112,10 @@ public:
   void promote(oop obj);
   // Marks one object; false if it was promoted already.
   bool mark_promoted(oop obj);
+
+  // The promoted objects of earlier regions in a kept or recycled page.
+  // At a safepoint only.
+  void kept_objects_iterate(EpoxyPage* page, ObjectClosure* cl);
 
   // Moves root, and every unpromoted object of region that it reaches, out
   // of region and into target (the global space when target is null), and
