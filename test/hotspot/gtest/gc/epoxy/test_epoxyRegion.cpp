@@ -355,6 +355,19 @@ static const size_t HalfLineWords = LineWords / 2;
 
 class EpoxyLineReuseTest : public EpoxyRegionTest {
 protected:
+  // The hole geometry of these tests is laid out for a minimum of 16 lines,
+  // whatever the VM's default is.
+  size_t _saved_min_recycle_lines;
+  void SetUp() override {
+    EpoxyRegionTest::SetUp();
+    _saved_min_recycle_lines = EpoxyMinRecycleLines;
+    EpoxyMinRecycleLines = 16;
+  }
+  void TearDown() override {
+    EpoxyMinRecycleLines = _saved_min_recycle_lines;
+    EpoxyRegionTest::TearDown();
+  }
+
   uint state(const void* addr) const { return (uint)_allocator->line_state(addr); }
   static HeapWord* line_start(EpoxyPage* page, size_t line) { return page->bottom() + line * LineWords; }
   static size_t line_of(EpoxyPage* page, const void* addr) {
