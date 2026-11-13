@@ -49,6 +49,9 @@ import java.util.IdentityHashMap;
  * @run main/othervm -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
  *                   -XX:+UseEpoxy -Xmx256m -XX:+EpoxyVerifyScratchExit
  *                   -XX:EpoxyScopeFile=${test.src}/scoped-evacuation.txt -XX:-TieredCompilation -Xcomp gc.epoxy.TestScopedEvacuation
+ * @run main/othervm -Xbootclasspath/a:. -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI
+ *                   -XX:+UseEpoxy -Xmx256m -DsmallCalls=20000
+ *                   -XX:EpoxyScopeFile=${test.src}/scoped-evacuation.txt gc.epoxy.TestScopedEvacuation
  */
 
 public class TestScopedEvacuation extends ScratchTestSupport {
@@ -378,7 +381,7 @@ public class TestScopedEvacuation extends ScratchTestSupport {
     verifyStrings(strings, "strings");
 
     // k
-    Small[] smalls = new Small[20000];
+    Small[] smalls = new Small[Integer.getInteger("smallCalls", 1000)];   // each call is a whole-heap walk under the verifier
     for (int i = 0; i < smalls.length; i++) {
       smalls[i] = smallValue(i);
     }
