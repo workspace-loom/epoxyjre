@@ -55,7 +55,7 @@ struct EpoxyLineStats {
 // committed afterwards. Freeing never visits the contents of a page.
 // allocate() and free() may be called from any thread.
 //
-// Alongside the pages it keeps the line table: one byte per 256-byte line of
+// Alongside the pages it keeps the line table: one byte per 64-byte line of
 // the whole heap (see EpoxyLineState). is_scratch() reads it, from any thread
 // at any time, so every access to a table byte is an atomic byte load or
 // store. A line is written only by the thread whose region owns its page,
@@ -79,7 +79,11 @@ private:
   CHeapBitMap     _committed;   // bit set: the page's memory is committed
   size_t          _used_pages;
   size_t          _committed_bytes;
-  EpoxyPage*      _recyclable;  // list linked by EpoxyPage::next(); guarded by _lock
+  // Recyclable pages by the size of their biggest hole: bucket b holds pages
+  // whose biggest hole has at least 2^b lines. Lists linked by
+  // EpoxyPage::next(); guarded by _lock.
+  static const int RecycleBuckets = 16;
+  EpoxyPage*      _recyclable[RecycleBuckets];
   size_t          _recyclable_count;
   EpoxyLineStats  _stats;
   mutable Mutex   _lock;
@@ -150,11 +154,21 @@ public:
 
   // ---- recyclable list ----
 
-  void add_recyclable(EpoxyPage* page);
+  // max_hole_lines: the size of the biggest hole of the page.
+  void add_recyclable(EpoxyPage* page, size_t max_hole_lines = 1);
   // Removes a page from the list and makes owner its owner; null if the list is empty.
-  EpoxyPage* take_recyclable(EpoxyRegion* owner);
+  // The page is one with a hole of at least min_lines lines.
+  EpoxyPage* take_recyclable(EpoxyRegion* owner, size_t min_lines = 1);
   // For walks at a safepoint, which need no lock.
-  EpoxyPage* recyclable_pages() const { return _recyclable; }
+  int recyclable_buckets() const { return RecycleBuckets; }
+  EpoxyPage* recyclable_pages(int bucket) const { return _recyclable[bucket]; }
+  // The first page of the first list that is not empty.
+  EpoxyPage* recyclable_pages() const {
+    for (int b = 0; b < RecycleBuckets; b++) {
+      if (_recyclable[b] != nullptr) return _recyclable[b];
+    }
+    return nullptr;
+  }
   size_t recyclable_count() const;
 
   EpoxyLineStats* stats() { return &_stats; }

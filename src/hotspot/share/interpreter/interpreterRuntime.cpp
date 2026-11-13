@@ -1254,12 +1254,12 @@ JRT_ENTRY(void, InterpreterRuntime::post_field_modification(JavaThread* current,
 JRT_END
 
 #if INCLUDE_EPOXY
-JRT_ENTRY(void, InterpreterRuntime::epoxy_scope_enter(JavaThread* current))
+JRT_ENTRY_NO_ASYNC(void, InterpreterRuntime::epoxy_scope_enter(JavaThread* current))
   LastFrameAccessor last_frame(current);
   EpoxyScopes::enter(current, last_frame.get_frame());
 JRT_END
 
-JRT_ENTRY(void, InterpreterRuntime::epoxy_scope_exit(JavaThread* current, oopDesc* result))
+JRT_ENTRY_NO_ASYNC(void, InterpreterRuntime::epoxy_scope_exit(JavaThread* current, oopDesc* result))
   LastFrameAccessor last_frame(current);
   EpoxyScopes::exit(current, last_frame.get_frame(), result);
 JRT_END

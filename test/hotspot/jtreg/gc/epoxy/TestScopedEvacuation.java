@@ -381,7 +381,7 @@ public class TestScopedEvacuation extends ScratchTestSupport {
     verifyStrings(strings, "strings");
 
     // k
-    Small[] smalls = new Small[Integer.getInteger("smallCalls", 1000)];   // each call is a whole-heap walk under the verifier
+    Small[] smalls = new Small[Integer.getInteger("smallCalls", 100)];   // each call walks everything reachable under the verifier, about 0.4 s in a debug build
     for (int i = 0; i < smalls.length; i++) {
       smalls[i] = smallValue(i);
     }

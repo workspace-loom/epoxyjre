@@ -47,7 +47,7 @@ EpoxyPageAllocator::EpoxyPageAllocator(MemRegion reserved, size_t page_size_byte
     _committed(reserved.byte_size() >> log2i_exact(page_size_bytes), mtGC),
     _used_pages(0),
     _committed_bytes(0),
-    _recyclable(nullptr),
+    _recyclable(),
     _recyclable_count(0),
     _lock(Mutex::nosafepoint - 1, "EpoxyPageAllocator_lock") {
   assert(is_aligned(reserved.start(), page_size_bytes), "start must be page aligned");
@@ -309,22 +309,29 @@ void EpoxyPageAllocator::take_hole(HeapWord* start, HeapWord* end) {
   set_lines(first, last, EpoxyLineScratch);
 }
 
-void EpoxyPageAllocator::add_recyclable(EpoxyPage* page) {
+void EpoxyPageAllocator::add_recyclable(EpoxyPage* page, size_t max_hole_lines) {
+  int bucket = MIN2(log2i(MAX2(max_hole_lines, (size_t)1)), RecycleBuckets - 1);
   MutexLocker ml(&_lock, Mutex::_no_safepoint_check_flag);
   page->_owner = nullptr;
   page->_recycled = false;
-  page->_next = _recyclable;
-  _recyclable = page;
+  page->_next = _recyclable[bucket];
+  _recyclable[bucket] = page;
   _recyclable_count++;
 }
 
-EpoxyPage* EpoxyPageAllocator::take_recyclable(EpoxyRegion* owner) {
+EpoxyPage* EpoxyPageAllocator::take_recyclable(EpoxyRegion* owner, size_t min_lines) {
+  // Every page of bucket b has a hole of 2^b lines: start at the first bucket
+  // that guarantees min_lines, so that small requests leave big holes alone.
+  int bucket = log2i_ceil(MAX2(min_lines, (size_t)1));
   MutexLocker ml(&_lock, Mutex::_no_safepoint_check_flag);
-  EpoxyPage* page = _recyclable;
-  if (page == nullptr) {
+  while (bucket < RecycleBuckets && _recyclable[bucket] == nullptr) {
+    bucket++;
+  }
+  if (bucket >= RecycleBuckets) {
     return nullptr;
   }
-  _recyclable = page->_next;
+  EpoxyPage* page = _recyclable[bucket];
+  _recyclable[bucket] = page->_next;
   _recyclable_count--;
   page->_next = nullptr;
   page->_owner = owner;

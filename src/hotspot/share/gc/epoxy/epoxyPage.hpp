@@ -26,11 +26,11 @@
 class EpoxyPageAllocator;
 class EpoxyRegion;
 
-// Liveness is tracked per line of 256 bytes. The line table has one byte per
+// Liveness is tracked per line of 64 bytes. The line table has one byte per
 // line for the whole heap and is owned by EpoxyPageAllocator. Bit 0 set means
 // "scratch": the line belongs to a live scratch region.
-const size_t EpoxyLineSize  = 256;
-const int    EpoxyLineShift = 8;
+const size_t EpoxyLineSize  = 64;
+const int    EpoxyLineShift = 6;
 
 enum EpoxyLineState : uint8_t {
   EpoxyLineKept            = 0,  // not scratch: global data, or promoted data left behind by a released region

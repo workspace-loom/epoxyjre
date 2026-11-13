@@ -66,13 +66,13 @@
           "roots and fail if anything reachable is about to be freed. "     \
           "Test tooling; not present in product builds.")                   \
                                                                             \
-  develop(size_t, EpoxyMinRecycleLines, 8,                                  \
+  develop(size_t, EpoxyMinRecycleLines, 16,                                 \
           "A page kept by a released scratch region goes on the "           \
           "recyclable list if it has a hole (a run of free lines) of at "   \
-          "least this many 256-byte lines.")                                \
+          "least this many 64-byte lines.")                                 \
           range(1, 1024)                                                    \
                                                                             \
-  develop(size_t, EpoxyMaxRecycleBytes, 2 * K,                              \
+  develop(size_t, EpoxyMaxRecycleBytes, 64 * K,                             \
           "A scratch region allocates requests of at most this many bytes " \
           "in the holes of recycled pages; bigger ones go to fresh pages.") \
           range(256, 64 * K)                                                \

@@ -36,10 +36,9 @@ EpoxyRegion::EpoxyRegion(EpoxyPageAllocator* pages, const char* name, bool scrat
     _pages(pages),
     _name(name),
     _page_words(pages->page_size_bytes() / HeapWordSize),
-    // A page on the recyclable list has a hole of at least EpoxyMinRecycleLines
-    // lines, so a request that fits there is always served by the next page
-    // taken from the list. Bigger requests would drain the list for nothing.
-    _max_recycle_words(MIN2((size_t)EpoxyMaxRecycleBytes, (size_t)EpoxyMinRecycleLines * EpoxyLineSize) / HeapWordSize),
+    // Bigger requests get a fresh page: a hole that size is rare, and a quarter
+    // of a page is the most a hole search is worth.
+    _max_recycle_words(MIN2((size_t)EpoxyMaxRecycleBytes, pages->page_size_bytes() / 4) / HeapWordSize),
     _scratch(scratch),
     _parent(nullptr),
     _depth(0),
@@ -145,7 +144,7 @@ bool EpoxyRegion::next_hole(size_t min_words) {
   size_t min_lines = align_up(min_words * HeapWordSize, EpoxyLineSize) / EpoxyLineSize;
   while (true) {
     if (_recycled == nullptr) {
-      EpoxyPage* page = _pages->take_recyclable(this);
+      EpoxyPage* page = _pages->take_recyclable(this, min_lines);
       if (page == nullptr) {
         return false;
       }
@@ -260,7 +259,9 @@ HeapWord* EpoxyRegion::allocate(size_t min_words, size_t desired_words, size_t* 
     if (AtomicAccess::load(&_current) != page) {
       continue;  // another thread already moved on
     }
-    if (holes && next_hole(min_words)) {
+    // A TLAB in a tiny hole is refilled at once: ask for a hole worth having.
+    // Every recyclable page has one of EpoxyMinRecycleLines lines.
+    if (holes && next_hole(MAX2(min_words, MIN2(desired_words, (size_t)EpoxyMinRecycleLines * EpoxyLineSize / HeapWordSize)))) {
       continue;
     }
     EpoxyPage* fresh = _pages->allocate(1);
@@ -345,7 +346,7 @@ void EpoxyRegion::release(EpoxyPage** kept) {
         page->set_top(page->end());
         page->set_owner(nullptr);
         if (result.max_hole_lines >= (size_t)EpoxyMinRecycleLines) {
-          _pages->add_recyclable(page);
+          _pages->add_recyclable(page, result.max_hole_lines);
           pages_recycled++;
         } else {
           page->set_next(kept_list);

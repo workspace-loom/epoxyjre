@@ -9,3 +9,15 @@ net.minecraft.server.MinecraftServer.waitUntilNextTick
 # One region per task on the worker pool: chunk generation, lighting and
 # other background work all pass through here.
 java.util.concurrent.ForkJoinTask.doExec
+
+# One region per task of the serial executors (chunk IO, entity
+# deserializing, lighting): these also run on the IO pool, which is not a
+# fork-join pool.
+net.minecraft.util.thread.AbstractConsecutiveExecutor.run
+
+# Packet handlers queued for the server thread run just before the tick.
+net.minecraft.network.PacketProcessor.processQueuedPackets
+
+# Start-up on the main thread: data packs, registries and world loading
+# leave about a gigabyte of garbage. Freed when main returns.
+net.minecraft.server.Main.main

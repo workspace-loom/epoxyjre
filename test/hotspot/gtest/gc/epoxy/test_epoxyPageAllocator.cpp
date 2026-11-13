@@ -202,7 +202,7 @@ TEST_VM_F(EpoxyPageAllocatorTest, scratch_is_bit_zero_of_the_line_state) {
   EXPECT_EQ((uint)_allocator->line_state(run->bottom()), (uint)EpoxyLineScratch);
 
   // A range that starts and ends inside lines marks every line it touches.
-  char* start = (char*)run->bottom() + 5 * EpoxyLineSize + 100;
+  char* start = (char*)run->bottom() + 5 * EpoxyLineSize + EpoxyLineSize / 2;
   char* end = (char*)run->bottom() + 7 * EpoxyLineSize + 1;
   _allocator->mark_lines_promoted(start, end);
   EXPECT_EQ((uint)_allocator->line_state(run->bottom() + 4 * TestLineWords), (uint)EpoxyLineScratch);
@@ -320,4 +320,51 @@ TEST_VM_F(EpoxyPageAllocatorTest, recyclable_list_hands_each_page_out_once) {
   EXPECT_EQ(_allocator->recyclable_count(), (size_t)0);
   EXPECT_EQ(_allocator->take_recyclable(owner), (EpoxyPage*)nullptr);
   EXPECT_EQ(_allocator->stats()->pages_reused, (size_t)2);
+}
+
+// A page goes in the bucket of its biggest hole; a request for N lines gets a
+// page whose biggest hole has at least N lines, whatever the order of adding.
+TEST_VM_F(EpoxyPageAllocatorTest, take_recyclable_picks_a_page_with_a_big_enough_hole) {
+  EpoxyPage* big = _allocator->allocate(1);
+  EpoxyPage* small = _allocator->allocate(1);
+  ASSERT_NE(big, (EpoxyPage*)nullptr);
+  ASSERT_NE(small, (EpoxyPage*)nullptr);
+  EpoxyRegion* owner = (EpoxyRegion*)0x10;
+
+  _allocator->add_recyclable(big, 40);
+  _allocator->add_recyclable(small, 3);   // added later, but its holes are small
+  EXPECT_EQ(_allocator->recyclable_count(), (size_t)2);
+
+  EpoxyPage* got = _allocator->take_recyclable(owner, 20);
+  EXPECT_EQ(got, big);
+  EXPECT_EQ(got->owner(), owner);
+  EXPECT_TRUE(got->is_recycled());
+  // Nothing left has a hole of 20 lines.
+  EXPECT_EQ(_allocator->take_recyclable(owner, 20), (EpoxyPage*)nullptr);
+  EXPECT_EQ(_allocator->recyclable_count(), (size_t)1);
+  EXPECT_EQ(_allocator->take_recyclable(owner, 2), small);
+  EXPECT_EQ(_allocator->recyclable_count(), (size_t)0);
+  EXPECT_EQ(_allocator->stats()->pages_reused, (size_t)2);
+}
+
+// A small request is given the page with the smallest sufficient hole, so that
+// pages with big holes stay for requests that need them.
+TEST_VM_F(EpoxyPageAllocatorTest, small_requests_leave_big_holes_alone) {
+  EpoxyPage* big = _allocator->allocate(1);
+  EpoxyPage* small = _allocator->allocate(1);
+  ASSERT_NE(big, (EpoxyPage*)nullptr);
+  ASSERT_NE(small, (EpoxyPage*)nullptr);
+  EpoxyRegion* owner = (EpoxyRegion*)0x10;
+
+  _allocator->add_recyclable(small, 3);
+  _allocator->add_recyclable(big, 40);   // added last
+  EXPECT_EQ(_allocator->take_recyclable(owner, 1), small);
+  EXPECT_EQ(_allocator->take_recyclable(owner, 1), big);
+  EXPECT_EQ(_allocator->take_recyclable(owner, 1), (EpoxyPage*)nullptr);
+
+  // A page whose biggest hole is exactly a power of two serves a request of that many lines.
+  EpoxyPage* exact = _allocator->allocate(1);
+  ASSERT_NE(exact, (EpoxyPage*)nullptr);
+  _allocator->add_recyclable(exact, 16);
+  EXPECT_EQ(_allocator->take_recyclable(owner, 16), exact);
 }

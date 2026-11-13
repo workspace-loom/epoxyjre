@@ -350,6 +350,8 @@ TEST_VM_F(EpoxyRegionTest, release_keeps_pages_with_promoted_objects) {
 
 static const size_t LineWords = EpoxyLineSize / HeapWordSize;
 static const size_t LinesPerPage = RegionPageSize / EpoxyLineSize;
+// An object of half a line: two of them to a line.
+static const size_t HalfLineWords = LineWords / 2;
 
 class EpoxyLineReuseTest : public EpoxyRegionTest {
 protected:
@@ -368,8 +370,8 @@ protected:
     return p;
   }
 
-  // One scratch region fills a fresh page with one-line objects, promotes the
-  // objects on the given lines and is released: the page keeps exactly those
+  // One scratch region takes a fresh page, promotes the one-line objects on the
+  // given lines and is released: the page keeps exactly those
   // lines. Returns the page; *adopted gets what release handed back.
   EpoxyPage* make_kept_page(const size_t* lines, size_t count, EpoxyPage** adopted = nullptr) {
     EpoxyRegion maker(_allocator, "maker", true);
@@ -407,7 +409,7 @@ TEST_VM_F(EpoxyLineReuseTest, release_with_scattered_promoted_objects_sets_line_
   EpoxyRegion scratch(_allocator, "scratch", true);
   HeapWord* objs[100];
   for (int i = 0; i < 100; i++) {
-    objs[i] = scratch.allocate(16);     // 128 bytes: two to a line
+    objs[i] = scratch.allocate(HalfLineWords);     // two to a line
     ASSERT_NE(objs[i], (HeapWord*)nullptr);
   }
   EpoxyPage* page = _allocator->page_for(objs[0]);
@@ -418,7 +420,7 @@ TEST_VM_F(EpoxyLineReuseTest, release_with_scattered_promoted_objects_sets_line_
   int promoted[] = {3, 10, 11, 50};
   for (int i : promoted) {
     page->note_promoted();
-    _allocator->mark_lines_promoted(objs[i], objs[i] + 16);
+    _allocator->mark_lines_promoted(objs[i], objs[i] + HalfLineWords);
   }
   EXPECT_EQ(state(objs[3]), (uint)EpoxyLineScratchPromoted);
   EXPECT_EQ(state(objs[0]), (uint)EpoxyLineScratch);
@@ -463,10 +465,10 @@ TEST_VM_F(EpoxyLineReuseTest, a_hole_is_reused_by_a_second_region_and_freed_agai
   ASSERT_EQ(_allocator->recyclable_count(), (size_t)1);
 
   EpoxyRegion second(_allocator, "second", true);
-  const size_t HoleObjects = (LinesPerPage - 2) * 2;   // 16-word objects, two to a line
+  const size_t HoleObjects = (LinesPerPage - 2) * 2;   // half-line objects, two to a line
   HeapWord* first = nullptr;
   for (size_t i = 0; i < HoleObjects; i++) {
-    HeapWord* p = alloc_obj(&second, 16);
+    HeapWord* p = alloc_obj(&second, HalfLineWords);
     ASSERT_NE(p, (HeapWord*)nullptr);
     if (first == nullptr) first = p;
     ASSERT_EQ(_allocator->page_for(p), page) << "object " << i;
@@ -495,7 +497,7 @@ TEST_VM_F(EpoxyLineReuseTest, a_hole_is_reused_by_a_second_region_and_freed_agai
   EXPECT_EQ(second.span_at(2).top, line_start(page, LinesPerPage));
 
   // The page is full: the next object comes from a fresh page.
-  HeapWord* extra = alloc_obj(&second, 16);
+  HeapWord* extra = alloc_obj(&second, HalfLineWords);
   ASSERT_NE(extra, (HeapWord*)nullptr);
   EpoxyPage* fresh = _allocator->page_for(extra);
   EXPECT_NE(fresh, page);
@@ -509,7 +511,7 @@ TEST_VM_F(EpoxyLineReuseTest, a_hole_is_reused_by_a_second_region_and_freed_agai
   for (int i = 0; i < cl._starts.length(); i++) {
     EXPECT_NE(cl._starts.at(i), line_start(page, 10));
     EXPECT_NE(cl._starts.at(i), line_start(page, 20));
-    EXPECT_EQ(cl._sizes.at(i), (size_t)16);
+    EXPECT_EQ(cl._sizes.at(i), HalfLineWords);
   }
 
   EpoxyPage* kept = (EpoxyPage*)0x1;
@@ -532,18 +534,20 @@ TEST_VM_F(EpoxyLineReuseTest, a_hole_is_reused_by_a_second_region_and_freed_agai
 
 TEST_VM_F(EpoxyLineReuseTest, an_object_that_spans_lines_keeps_every_line) {
   EpoxyRegion scratch(_allocator, "scratch", true);
-  HeapWord* small = scratch.allocate(20);     // lines 0 (words 0 to 19)
-  HeapWord* big = scratch.allocate(100);      // words 20 to 119: lines 0 to 3
-  HeapWord* after = scratch.allocate(20);     // words 120 to 139: lines 3 and 4
+  HeapWord* small = scratch.allocate(HalfLineWords);       // first half of line 0
+  HeapWord* big = scratch.allocate(3 * LineWords);         // from the middle of line 0 to the middle of line 3
+  HeapWord* after = scratch.allocate(LineWords);           // second half of line 3 and first half of line 4
   ASSERT_NE(small, (HeapWord*)nullptr);
   ASSERT_NE(big, (HeapWord*)nullptr);
   ASSERT_NE(after, (HeapWord*)nullptr);
   EpoxyPage* page = _allocator->page_for(small);
   EXPECT_EQ(line_of(page, big), (size_t)0);
-  EXPECT_EQ(line_of(page, big + 99), (size_t)3);
+  EXPECT_EQ(line_of(page, big + 3 * LineWords - 1), (size_t)3);
+  EXPECT_EQ(line_of(page, after), (size_t)3);
+  EXPECT_EQ(line_of(page, after + LineWords - 1), (size_t)4);
 
   page->note_promoted();
-  _allocator->mark_lines_promoted(big, big + 100);
+  _allocator->mark_lines_promoted(big, big + 3 * LineWords);
   for (size_t l = 0; l <= 3; l++) {
     EXPECT_EQ(state(line_start(page, l)), (uint)EpoxyLineScratchPromoted) << "line " << l;
   }
@@ -555,15 +559,15 @@ TEST_VM_F(EpoxyLineReuseTest, an_object_that_spans_lines_keeps_every_line) {
   size_t kept_lines[] = {0, 1, 2, 3};
   expect_only_kept_lines(page, kept_lines, 4);
   EXPECT_FALSE(_allocator->is_scratch(big));
-  EXPECT_FALSE(_allocator->is_scratch(big + 99));
+  EXPECT_FALSE(_allocator->is_scratch(big + 3 * LineWords - 1));
 
   // Nothing is ever allocated over the object: the free lines start at line 4.
   EpoxyRegion second(_allocator, "second", true);
-  HeapWord* p = second.allocate(16);
+  HeapWord* p = second.allocate(HalfLineWords);
   ASSERT_NE(p, (HeapWord*)nullptr);
   EXPECT_EQ(p, line_start(page, 4));
   for (int i = 0; i < 100; i++) {
-    HeapWord* q = second.allocate(16);
+    HeapWord* q = second.allocate(HalfLineWords);
     ASSERT_NE(q, (HeapWord*)nullptr);
     EXPECT_GE(q, line_start(page, 4));
   }
@@ -578,16 +582,16 @@ TEST_VM_F(EpoxyLineReuseTest, a_promoted_object_in_a_recycled_hole_survives_a_se
   EpoxyRegion second(_allocator, "second", true);
   HeapWord* objs[40];
   for (int i = 0; i < 40; i++) {
-    objs[i] = alloc_obj(&second, 16);
+    objs[i] = alloc_obj(&second, HalfLineWords);
     ASSERT_NE(objs[i], (HeapWord*)nullptr);
     ASSERT_EQ(_allocator->page_for(objs[i]), page);
   }
   EXPECT_EQ(line_of(page, objs[4]), (size_t)2);
   EXPECT_EQ(line_of(page, objs[25]), (size_t)13);   // 20 objects in lines 0 to 9, then lines 11 on
   page->note_promoted();
-  _allocator->mark_lines_promoted(objs[4], objs[4] + 16);
+  _allocator->mark_lines_promoted(objs[4], objs[4] + HalfLineWords);
   page->note_promoted();
-  _allocator->mark_lines_promoted(objs[25], objs[25] + 16);
+  _allocator->mark_lines_promoted(objs[25], objs[25] + HalfLineWords);
 
   EpoxyPage* kept = (EpoxyPage*)0x1;
   second.release(&kept);
@@ -603,13 +607,13 @@ TEST_VM_F(EpoxyLineReuseTest, a_promoted_object_in_a_recycled_hole_survives_a_se
   EpoxyRegion third(_allocator, "third", true);
   const size_t HoleObjects = (LinesPerPage - 4) * 2;
   for (size_t i = 0; i < HoleObjects; i++) {
-    HeapWord* p = alloc_obj(&third, 16);
+    HeapWord* p = alloc_obj(&third, HalfLineWords);
     ASSERT_NE(p, (HeapWord*)nullptr);
     ASSERT_EQ(_allocator->page_for(p), page) << "object " << i;
     size_t line = line_of(page, p);
     ASSERT_TRUE(line != 2 && line != 10 && line != 13 && line != 20) << "object " << i << " in line " << line;
   }
-  HeapWord* extra = alloc_obj(&third, 16);
+  HeapWord* extra = alloc_obj(&third, HalfLineWords);
   ASSERT_NE(extra, (HeapWord*)nullptr);
   EXPECT_NE(_allocator->page_for(extra), page);
   third.release(&kept);
@@ -638,7 +642,7 @@ TEST_VM_F(EpoxyLineReuseTest, hole_size_threshold_decides_recyclable_or_adopted)
   EXPECT_EQ(_allocator->recyclable_count(), (size_t)0);
   EXPECT_EQ(_allocator->stats()->pages_adopted, (size_t)1);
   EXPECT_EQ(_allocator->stats()->pages_recycled, (size_t)0);
-  // 16 or so free lines in holes of fewer than Min lines.
+  // Free lines in holes of fewer than Min lines (Min - 1 each).
   EXPECT_GT(_allocator->free_lines_in_holes_below(Min), (size_t)0);
   EXPECT_EQ(_allocator->free_lines_in_holes_below(Min - 1), (size_t)0);
 
@@ -656,7 +660,7 @@ TEST_VM_F(EpoxyLineReuseTest, hole_size_threshold_decides_recyclable_or_adopted)
 
   // A region only ever allocates in the recyclable one.
   EpoxyRegion r(_allocator, "r", true);
-  HeapWord* p = r.allocate(16);
+  HeapWord* p = r.allocate(HalfLineWords);
   ASSERT_NE(p, (HeapWord*)nullptr);
   EXPECT_EQ(_allocator->page_for(p), exact_holes);
   EpoxyPage* kept = nullptr;
@@ -665,12 +669,12 @@ TEST_VM_F(EpoxyLineReuseTest, hole_size_threshold_decides_recyclable_or_adopted)
 
 // Requests above EpoxyMaxRecycleBytes go to fresh pages even if a recycled page is available.
 TEST_VM_F(EpoxyLineReuseTest, large_requests_bypass_recycled_pages) {
-  size_t kept_lines[] = {100};
+  size_t kept_lines[] = {LinesPerPage / 2};   // the first hole is half a page
   EpoxyPage* page = make_kept_page(kept_lines, 1);
   ASSERT_NE(page, (EpoxyPage*)nullptr);
   ASSERT_EQ(_allocator->recyclable_count(), (size_t)1);
 
-  const size_t MaxWords = MIN2((size_t)EpoxyMaxRecycleBytes, (size_t)EpoxyMinRecycleLines * EpoxyLineSize) / HeapWordSize;
+  const size_t MaxWords = MIN2((size_t)EpoxyMaxRecycleBytes, RegionPageSize / 4) / HeapWordSize;
   EpoxyRegion r(_allocator, "r", true);
   HeapWord* big = r.allocate(MaxWords + 2);
   ASSERT_NE(big, (HeapWord*)nullptr);
@@ -707,48 +711,82 @@ TEST_VM_F(EpoxyLineReuseTest, large_requests_bypass_recycled_pages) {
   EXPECT_EQ(_allocator->recyclable_pages(), page);
 }
 
-// A TLAB-style request takes a hole when the hole is at least the minimum, and
-// what it gets lies entirely inside that hole.
+// A TLAB-style request takes a hole of at least EpoxyMinRecycleLines lines, or
+// of the minimum if that is bigger, and what it gets lies entirely inside that hole.
 TEST_VM_F(EpoxyLineReuseTest, ranged_request_in_a_hole_stays_inside_it) {
-  // Lines 0 to 2 are a hole of three lines (96 words); line 3 is kept; the rest is free.
-  size_t kept_lines[] = {3};
+  // Lines 0 to H - 1 are a hole of exactly the smallest hole a ranged request
+  // takes; line H is kept; the rest of the page is free.
+  const size_t H = EpoxyMinRecycleLines;
+  const size_t HoleWords = H * LineWords;
+  size_t kept_lines[] = {H};
   EpoxyPage* page = make_kept_page(kept_lines, 1);
   ASSERT_NE(page, (EpoxyPage*)nullptr);
 
   EpoxyRegion r(_allocator, "r", true);
   size_t actual = 0;
-  HeapWord* a = r.allocate(64, 400, &actual);   // fits the first hole: it gets all of it
+  HeapWord* a = r.allocate(HoleWords / 2, HoleWords * 4, &actual);   // fits the first hole: it gets all of it
   ASSERT_NE(a, (HeapWord*)nullptr);
   EXPECT_EQ(a, line_start(page, 0));
-  EXPECT_EQ(actual, 3 * LineWords);
+  EXPECT_EQ(actual, HoleWords);
   EXPECT_EQ(state(a), (uint)EpoxyLineScratch);
 
-  // The next one needs more than the first hole had: it moves to the hole after line 3.
-  HeapWord* b = r.allocate(200, 300, &actual);
+  // The next one needs more than the first hole had: it moves to the hole after line H.
+  HeapWord* b = r.allocate(2 * HoleWords, 3 * HoleWords, &actual);
   ASSERT_NE(b, (HeapWord*)nullptr);
-  EXPECT_EQ(b, line_start(page, 4));
-  EXPECT_EQ(actual, (size_t)300);
+  EXPECT_EQ(b, line_start(page, H + 1));
+  EXPECT_EQ(actual, 3 * HoleWords);
   EXPECT_EQ(_allocator->page_for(b), page);
 
   // A second request with a small minimum takes the rest of that hole, in pieces.
-  HeapWord* c = r.allocate(64, 100, &actual);
+  HeapWord* c = r.allocate(HoleWords / 2, HoleWords, &actual);
   ASSERT_NE(c, (HeapWord*)nullptr);
-  EXPECT_EQ(c, b + 300);
-  EXPECT_EQ(actual, (size_t)100);
+  EXPECT_EQ(c, b + 3 * HoleWords);
+  EXPECT_EQ(actual, HoleWords);
   EpoxyPage* kept = nullptr;
   r.release(&kept);
 
   // And a region whose first minimum is below the first hole gets exactly that hole.
   EpoxyRegion r2(_allocator, "r2", true);
-  HeapWord* d = r2.allocate(10, 30, &actual);
+  const size_t Piece = HoleWords / 4;
+  HeapWord* d = r2.allocate(LineWords, Piece, &actual);
   ASSERT_NE(d, (HeapWord*)nullptr);
   EXPECT_EQ(d, line_start(page, 0));
-  EXPECT_EQ(actual, (size_t)30);
-  HeapWord* e = r2.allocate(10, 400, &actual);   // only 66 words are left of that hole
+  EXPECT_EQ(actual, Piece);
+  HeapWord* e = r2.allocate(LineWords, HoleWords * 4, &actual);   // only the rest of that hole is left
   ASSERT_NE(e, (HeapWord*)nullptr);
-  EXPECT_EQ(e, d + 30);
-  EXPECT_EQ(actual, 3 * LineWords - 30);
-  EXPECT_LE(e + actual, line_start(page, 3));
+  EXPECT_EQ(e, d + Piece);
+  EXPECT_EQ(actual, HoleWords - Piece);
+  EXPECT_LE(e + actual, line_start(page, H));
+  r2.release(&kept);
+}
+
+// A ranged request asks for a hole of EpoxyMinRecycleLines lines even when its
+// minimum is smaller, so a TLAB is not refilled at once in a tiny hole; a
+// plain request of the same minimum does use the tiny hole.
+TEST_VM_F(EpoxyLineReuseTest, ranged_request_skips_holes_below_the_recycle_minimum) {
+  const size_t Min = EpoxyMinRecycleLines;
+  ASSERT_GE(Min, (size_t)2);
+  // A hole of Min - 1 lines, a kept line, then the rest of the page is one big hole.
+  size_t kept_lines[] = {Min - 1};
+  EpoxyPage* page = make_kept_page(kept_lines, 1);
+  ASSERT_NE(page, (EpoxyPage*)nullptr);
+  ASSERT_EQ(_allocator->recyclable_count(), (size_t)1);
+
+  EpoxyRegion r(_allocator, "r", true);
+  size_t actual = 0;
+  const size_t Desired = 2 * Min * LineWords;
+  HeapWord* a = r.allocate(LineWords, Desired, &actual);
+  ASSERT_NE(a, (HeapWord*)nullptr);
+  EXPECT_EQ(a, line_start(page, Min));
+  EXPECT_EQ(actual, Desired);
+  EXPECT_EQ(state(line_start(page, 0)), (uint)EpoxyLineFree);   // the tiny hole was passed over
+  EpoxyPage* kept = nullptr;
+  r.release(&kept);
+
+  EpoxyRegion r2(_allocator, "r2", true);
+  HeapWord* b = r2.allocate(HalfLineWords);
+  ASSERT_NE(b, (HeapWord*)nullptr);
+  EXPECT_EQ(b, line_start(page, 0));
   r2.release(&kept);
 }
 

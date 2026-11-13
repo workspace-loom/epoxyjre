@@ -577,8 +577,10 @@ void EpoxyHeap::object_iterate(ObjectClosure *cl) {
   for (EpoxyPage* page = _adopted_pages; page != nullptr; page = page->next()) {
     kept_objects_iterate(page, cl);
   }
-  for (EpoxyPage* page = _page_allocator->recyclable_pages(); page != nullptr; page = page->next()) {
-    kept_objects_iterate(page, cl);
+  for (int b = 0; b < _page_allocator->recyclable_buckets(); b++) {
+    for (EpoxyPage* page = _page_allocator->recyclable_pages(b); page != nullptr; page = page->next()) {
+      kept_objects_iterate(page, cl);
+    }
   }
 }
 
